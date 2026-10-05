@@ -665,3 +665,23 @@ test('Shipmentroutes bewaren heen en terug met geldige datums en tonen ze op all
   const persisted = (await request('/shipments')).data.find(s => s.id === shipment.id);
   assert.equal(persisted.returnDestination, 'Brussel'); assert.equal(persisted.outboundDate, '2026-10-08');
 });
+
+test('Logobibliotheek bewaart uploads en hergebruikt logo’s met beheercontrole', async () => {
+  const shipment = (await request('/shipments', 'POST', { name: 'Bibliotheek' })).data;
+  const form = new FormData(); form.append('file', new Blob([pngSample], { type: 'image/png' }), 'Bedrijfslogo.png');
+  assert.equal((await request(`/shipments/${shipment.id}/logo`, 'POST', form)).status, 200);
+  const logos = (await request('/logos')).data;
+  assert.ok(logos.length > 0);
+  const logo = logos.find(l => l.name === 'Bedrijfslogo') || logos[0];
+  const target = (await request('/shipments', 'POST', { name: 'Herbruik logo' })).data;
+  assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: logo.id })).status, 200);
+  assert.ok((await request(`/shipments/${target.id}`)).data.hasLogo);
+  const member = await createMember('logo-library@example.test');
+  assert.equal((await request('/logos', 'GET', undefined, null)).status, 401);
+  assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: logo.id }, member.session)).status, 404);
+  assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: 'missing' })).status, 400);
+  await request(`/shipments/${shipment.id}/logo`, 'DELETE');
+  assert.ok((await request(`/shipments/${target.id}`)).data.hasLogo);
+  const before = (await request('/logos')).data.length;
+  await stop(); await start(); assert.equal((await request('/logos')).data.length, before);
+});

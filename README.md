@@ -120,3 +120,7 @@ Shipments hebben een **Bestemming heen**, **Datum heen**, **Bestemming terug** e
 ## Nieuwe installatie vanuit GitHub
 
 De repository bevat alleen code, zonder database, accounts, palletfoto’s of installatiecodes. Na het ophalen van de repository en starten van de backend wordt automatisch een lege database aangemaakt. Lokaal verschijnt de installatiecode in `data/setup-token.txt`; op Railway stel je vooraf `SETUP_TOKEN` in. Daarmee maak je het eerste beheerdersaccount aan. Je eigen bestaande lokale gegevens blijven buiten Git en worden niet gewist.
+
+### Logobibliotheek
+
+Bij **Shipmentinstellingen → Shipmentlogo** kun je een bewaard logo kiezen. Nieuwe uploads worden automatisch opgenomen in een gedeelde bibliotheek; bestaande shipmentlogo’s worden bij de eerste start overgenomen. Identieke bestanden worden één keer opgeslagen. Alle ingelogde gebruikers kunnen de bibliotheek bekijken; alleen de maker en beheerders kunnen een logo aan een shipment toewijzen. Een gekozen logo wordt bij die shipment bewaard, zodat andere shipments niet veranderen wanneer je een ander logo kiest of de fallback gebruikt. De bibliotheek blijft behouden wanneer een shipment verwijderd wordt.
