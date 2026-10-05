@@ -679,9 +679,31 @@ test('Logobibliotheek bewaart uploads en hergebruikt logo’s met beheercontrole
   const member = await createMember('logo-library@example.test');
   assert.equal((await request('/logos', 'GET', undefined, null)).status, 401);
   assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: logo.id }, member.session)).status, 404);
-  assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: 'missing' })).status, 400);
+  assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: 'missing' })).status, 404);
   await request(`/shipments/${shipment.id}/logo`, 'DELETE');
   assert.ok((await request(`/shipments/${target.id}`)).data.hasLogo);
   const before = (await request('/logos')).data.length;
   await stop(); await start(); assert.equal((await request('/logos')).data.length, before);
+});
+
+test('Logobibliotheek controleert shipmentrechten bij lijst, afbeelding en kiezen', async () => {
+  const owner = await createMember('logo-owner@example.test');
+  const viewer = await createMember('logo-viewer@example.test');
+  const shipment = (await request('/shipments', 'POST', { name: 'Privé logo' }, owner.session)).data;
+  const bytes = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#abc123' } }).png().toBuffer();
+  const form = new FormData(); form.append('file', new Blob([bytes]), 'PrivaatLogo.png');
+  await request(`/shipments/${shipment.id}/logo`, 'POST', form, owner.session);
+  const logo = (await request('/logos', 'GET', undefined, owner.session)).data.find(l => l.name === 'PrivaatLogo'); assert.ok(logo);
+  assert.equal((await request('/logos', 'GET', undefined, viewer.session)).data.some(l => l.id === logo.id), false);
+  const imageStatus = async () => (await fetch(`http://127.0.0.1:${port}/api/logos/${logo.id}`, { headers: { Cookie: viewer.session.cookie } })).status;
+  assert.equal(await imageStatus(), 404);
+  const target = (await request('/shipments', 'POST', { name: 'Eigen shipment' }, viewer.session)).data;
+  assert.equal((await request(`/shipments/${target.id}/logo`, 'PUT', { logoId: logo.id }, viewer.session)).status, 404);
+  await request(`/shipments/${shipment.id}/access`, 'PUT', { userIds: [viewer.user.id] }, owner.session);
+  assert.ok((await request('/logos', 'GET', undefined, viewer.session)).data.some(l => l.id === logo.id)); assert.equal(await imageStatus(), 200);
+  await request(`/shipments/${shipment.id}/access`, 'PUT', { userIds: [] }, owner.session);
+  assert.equal(await imageStatus(), 404);
+  assert.equal((await request('/logos', 'GET', undefined, viewer.session)).data.some(l => l.id === logo.id), false);
+  await request(`/shipments/${shipment.id}`, 'DELETE', { confirmName: shipment.name }, owner.session);
+  assert.equal((await request('/logos', 'GET', undefined, owner.session)).data.some(l => l.id === logo.id), false);
 });

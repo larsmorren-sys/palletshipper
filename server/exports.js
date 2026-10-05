@@ -14,6 +14,8 @@ const documentHtml = (title, css, content) => `<!doctype html><html lang="nl"><h
 export function installExports(app, db, auth) {
   db.exec('CREATE TABLE IF NOT EXISTS shipment_logos (shipmentId TEXT PRIMARY KEY REFERENCES shipments(id), content BLOB NOT NULL, mimeType TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS logo_library (id TEXT PRIMARY KEY, name TEXT NOT NULL, content BLOB NOT NULL, mimeType TEXT NOT NULL, digest TEXT NOT NULL UNIQUE)');
+  db.exec('CREATE TABLE IF NOT EXISTS logo_library_shipments (logoId TEXT NOT NULL REFERENCES logo_library(id), shipmentId TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE, PRIMARY KEY (logoId, shipmentId))');
+  const linkLogo = (logoId, shipmentId) => db.prepare('INSERT OR IGNORE INTO logo_library_shipments VALUES (?, ?)').run(logoId, shipmentId);
   const saveLogo = (name, bytes, mimeType) => {
     const digest = createHash('sha256').update(bytes).digest('hex');
     const existing = db.prepare('SELECT id, name FROM logo_library WHERE digest=?').get(digest);
@@ -22,18 +24,27 @@ export function installExports(app, db, auth) {
     db.prepare('INSERT INTO logo_library VALUES (?, ?, ?, ?, ?)').run(id, name.slice(0, 200), bytes, mimeType, digest);
     return { id, name: name.slice(0, 200) };
   };
-  for (const logo of db.prepare('SELECT l.*, s.name FROM shipment_logos l JOIN shipments s ON s.id=l.shipmentId').all()) saveLogo(logo.name, Buffer.from(logo.content), logo.mimeType);
-  app.get('/api/logos', (req, res) => res.json(db.prepare('SELECT id, name FROM logo_library ORDER BY name COLLATE NOCASE').all()));
+  for (const logo of db.prepare('SELECT l.*, s.name FROM shipment_logos l JOIN shipments s ON s.id=l.shipmentId').all()) {
+    linkLogo(saveLogo(logo.name, Buffer.from(logo.content), logo.mimeType).id, logo.shipmentId);
+  }
+  const visibleLogos = user => user.role === 'admin' ? db.prepare('SELECT id, name FROM logo_library ORDER BY name COLLATE NOCASE').all() : db.prepare(`SELECT l.id, l.name FROM logo_library l WHERE EXISTS (
+    SELECT 1 FROM logo_library_shipments ls JOIN shipments s ON s.id=ls.shipmentId
+    WHERE ls.logoId=l.id AND (s.ownerId=? OR EXISTS (SELECT 1 FROM shipment_access a WHERE a.shipmentId=s.id AND a.userId=?))
+  ) ORDER BY l.name COLLATE NOCASE`).all(user.id, user.id);
+  const requireLibraryLogo = (user, id) => {
+    if (typeof id !== 'string' || !visibleLogos(user).some(logo => logo.id === id)) throw fail('Logo niet gevonden of geen toegang.', 404);
+    return db.prepare('SELECT * FROM logo_library WHERE id=?').get(id);
+  };
+  app.get('/api/logos', (req, res) => res.json(visibleLogos(req.user)));
   app.get('/api/logos/:id', (req, res) => {
-    const logo = db.prepare('SELECT content, mimeType FROM logo_library WHERE id=?').get(req.params.id);
-    if (!logo) throw fail('Logo niet gevonden.', 404);
+    const logo = requireLibraryLogo(req.user, req.params.id);
     res.type(logo.mimeType).send(Buffer.from(logo.content));
   });
   app.put('/api/shipments/:id/logo', (req, res) => {
     auth.requireShipment(req.user, req.params.id, true);
-    const logo = db.prepare('SELECT * FROM logo_library WHERE id=?').get(req.body.logoId);
-    if (!logo) throw fail('Kies een logo uit de bibliotheek.');
+    const logo = requireLibraryLogo(req.user, req.body.logoId);
     db.prepare('INSERT INTO shipment_logos VALUES (?, ?, ?) ON CONFLICT(shipmentId) DO UPDATE SET content=excluded.content,mimeType=excluded.mimeType').run(req.params.id, logo.content, logo.mimeType);
+    linkLogo(logo.id, req.params.id);
     res.json({ ok: true });
   });
   const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -43,7 +54,7 @@ export function installExports(app, db, auth) {
     const mimeType = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'image/jpeg' : bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png' : bytes.subarray(0,4).toString() === 'RIFF' && bytes.subarray(8,12).toString() === 'WEBP' ? 'image/webp' : null;
     if (!mimeType) throw fail('Gebruik een PNG-, JPG- of WebP-logo.');
     db.prepare('INSERT INTO shipment_logos VALUES (?, ?, ?) ON CONFLICT(shipmentId) DO UPDATE SET content=excluded.content,mimeType=excluded.mimeType').run(req.params.id, bytes, mimeType);
-    saveLogo(req.file.originalname.replace(/\.[^.]+$/, '') || 'Logo', bytes, mimeType);
+    linkLogo(saveLogo(req.file.originalname.replace(/\.[^.]+$/, '') || 'Logo', bytes, mimeType).id, req.params.id);
     res.json({ ok: true });
   });
   app.get('/api/shipments/:id/logo', (req, res) => {
