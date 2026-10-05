@@ -23,10 +23,10 @@ export function PhotoViewer({ photos, initialIndex, palletName, onClose }) {
     return () => { window.removeEventListener('keydown', handleKey); document.body.style.overflow = overflow; previousFocus?.focus(); };
   }, [photos.length, onClose]);
   return <div className="overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <section className="modal photo-viewer" ref={dialog} role="dialog" aria-modal="true" aria-label={`Foto’s van ${palletName}`}>
-      <header><h2>{palletName}</h2><button className="secondary" aria-label="Fotopopup sluiten" onClick={onClose}>Sluiten</button></header>
-      <img className="viewer-image" src={photos[index].url} alt={`Foto ${index + 1} van ${palletName}`}/>
-      <div className="viewer-controls"><button className="secondary" disabled={photos.length < 2} onClick={() => setIndex(i => (i - 1 + photos.length) % photos.length)}>Vorige foto</button><span role="status">Foto {index + 1} van {photos.length}</span><button className="secondary" disabled={photos.length < 2} onClick={() => setIndex(i => (i + 1) % photos.length)}>Volgende foto</button></div>
+    <section className="modal photo-viewer" ref={dialog} role="dialog" aria-modal="true" aria-label={`Photos of ${palletName}`}>
+      <header><h2>{palletName}</h2><button className="secondary" aria-label="Close photo viewer" onClick={onClose}>Close</button></header>
+      <img className="viewer-image" src={photos[index].url} alt={`Photo ${index + 1} of ${palletName}`}/>
+      <div className="viewer-controls"><button className="secondary" disabled={photos.length < 2} onClick={() => setIndex(i => (i - 1 + photos.length) % photos.length)}>Previous photo</button><span role="status">Photo {index + 1} of {photos.length}</span><button className="secondary" disabled={photos.length < 2} onClick={() => setIndex(i => (i + 1) % photos.length)}>Next photo</button></div>
     </section>
   </div>;
 }

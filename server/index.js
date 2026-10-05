@@ -70,13 +70,13 @@ app.use('/api', (req, res, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     const parts = req.path.split('/');
     const shipmentId = parts[1] === 'shipments' ? parts[2] : parts[1] === 'pallets' ? db.prepare('SELECT shipmentId FROM pallets WHERE id=?').get(parts[2])?.shipmentId : parts[1] === 'items' ? db.prepare('SELECT shipmentId FROM items WHERE id=?').get(parts[2])?.shipmentId : null;
-    if (archiving.has(shipmentId)) throw fail('Deze shipment wordt gearchiveerd. Probeer straks opnieuw.', 409);
+    if (archiving.has(shipmentId)) throw fail('This shipment is being archived. Try again shortly.', 409);
   }
   next();
 });
 installExports(app, db, auth);
 const requireShipment = auth.requireShipment;
-const requirePallet = (id, shipmentId) => { if (!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id, shipmentId)) throw fail('Pallet hoort niet bij deze shipment.'); };
+const requirePallet = (id, shipmentId) => { if (!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id, shipmentId)) throw fail('This pallet does not belong to this shipment.'); };
 const itemView = row => ({ ...row, revision: revision(row), displayName: `${row.name} ${row.instanceNumber}`, statuses: JSON.parse(row.statuses) });
 // Keep a high-water mark so removing an object never reuses its number.
 db.exec('CREATE TABLE IF NOT EXISTS item_sequences (shipmentId TEXT NOT NULL REFERENCES shipments(id), nameKey TEXT NOT NULL, lastNumber INTEGER NOT NULL, PRIMARY KEY(shipmentId, nameKey))');
@@ -91,17 +91,17 @@ function routeFields(body) {
   const fields = {};
   for (const key of ['returnDestination', 'outboundDate', 'returnDate']) {
     if (!(key in body)) continue;
-    if (typeof body[key] !== 'string') throw fail('Ongeldige bestemming of datum.');
+    if (typeof body[key] !== 'string') throw fail('Invalid destination or date.');
     const value = body[key].trim();
-    if (key === 'returnDestination') { if (value.length > 200) throw fail('Gebruik maximaal 200 tekens voor de terugbestemming.'); }
-    else if (value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw fail('Geef een geldige datum op.');
+    if (key === 'returnDestination') { if (value.length > 200) throw fail('Use no more than 200 characters for the return destination.'); }
+    else if (value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw fail('Enter a valid date.');
     fields[key] = value;
   }
   return fields;
 }
 app.post('/api/shipments', (req, res) => {
   const name = clean(req.body.name), destination = clean(req.body.destination);
-  if (!name) throw fail('Geef de shipment een naam.');
+  if (!name) throw fail('Enter a shipment name.');
   const shipment = { id: randomUUID(), name, destination, createdAt: new Date().toISOString(), ownerId: req.user.id, returnDestination: '', outboundDate: '', returnDate: '', ...routeFields(req.body) };
   db.prepare('INSERT INTO shipments (id, name, destination, createdAt, ownerId, returnDestination, outboundDate, returnDate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(shipment.id, name, destination, shipment.createdAt, shipment.ownerId, shipment.returnDestination, shipment.outboundDate, shipment.returnDate);
   res.status(201).json(auth.viewShipment(req.user, shipment));
@@ -110,18 +110,18 @@ app.patch('/api/shipments/:id', async (req, res) => {
   const shipment = requireShipment(req.user, req.params.id, true);
   checkRevision(req.body, revision(shipment));
   const changes = routeFields(req.body);
-  if (!['archived', 'name', 'destination', 'returnDestination', 'outboundDate', 'returnDate'].some(key => key in req.body)) throw fail('Geef een wijziging op.');
+  if (!['archived', 'name', 'destination', 'returnDestination', 'outboundDate', 'returnDate'].some(key => key in req.body)) throw fail('Specify a change.');
   for (const key of ['name', 'destination']) {
     if (key in req.body) {
-      if (typeof req.body[key] !== 'string' || req.body[key].trim().length > 200 || key === 'name' && !req.body[key].trim()) throw fail(key === 'name' ? 'Geef een shipmentnaam van maximaal 200 tekens.' : 'Geef een locatie van maximaal 200 tekens.');
+      if (typeof req.body[key] !== 'string' || req.body[key].trim().length > 200 || key === 'name' && !req.body[key].trim()) throw fail(key === 'name' ? 'Enter a shipment name of up to 200 characters.' : 'Enter a location of up to 200 characters.');
       changes[key] = req.body[key].trim();
     }
   }
-  if ('archived' in req.body && typeof req.body.archived !== 'boolean') throw fail('Ongeldige archiefstatus.');
+  if ('archived' in req.body && typeof req.body.archived !== 'boolean') throw fail('Invalid archive status.');
   if (req.body.archived) {
     archiving.add(req.params.id);
     try { await archiveShipment(db, dataDir, req.params.id); }
-    catch { throw fail('Archiveren mislukt: een foto kon niet worden verwerkt. De shipment en originele foto’s blijven behouden.'); }
+    catch { throw fail('Archiving failed: a photo could not be processed. The shipment and original photos have been preserved.'); }
     finally { archiving.delete(req.params.id); }
   } else if ('archived' in req.body) db.prepare('UPDATE shipments SET archivedAt=NULL WHERE id=?').run(req.params.id);
   for (const [key, value] of Object.entries(changes)) db.prepare(`UPDATE shipments SET ${key}=? WHERE id=?`).run(value, req.params.id);
@@ -130,7 +130,7 @@ app.patch('/api/shipments/:id', async (req, res) => {
 app.delete('/api/shipments/:id', (req, res) => {
   const shipment = requireShipment(req.user, req.params.id, true);
   checkRevision(req.body, revision(shipment));
-  if (req.body.confirmName !== shipment.name) throw fail('Typ de shipmentnaam om verwijderen te bevestigen.');
+  if (req.body.confirmName !== shipment.name) throw fail('Type the shipment name to confirm deletion.');
   const photos = db.prepare('SELECT url FROM pallet_photos WHERE palletId IN (SELECT id FROM pallets WHERE shipmentId=?)').all(shipment.id);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -141,7 +141,7 @@ app.delete('/api/shipments/:id', (req, res) => {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   for (const photo of photos) {
     try { unlinkSync(path.join(dataDir, 'uploads', path.basename(photo.url))); }
-    catch (error) { if (error.code !== 'ENOENT') console.error('Fotobestand kon niet worden verwijderd:', error.code); }
+    catch (error) { if (error.code !== 'ENOENT') console.error('Could not delete photo file:', error.code); }
   }
   res.json({ ok: true });
 });
@@ -154,20 +154,20 @@ app.post('/api/shipments/:id/pallets', (req, res) => {
   const name = clean(req.body.name);
   const prefix = req.body.prefix === undefined ? 'Pallet' : req.body.prefix;
   const postfix = req.body.postfix === undefined ? '' : req.body.postfix;
-  if (typeof prefix !== 'string' || typeof postfix !== 'string' || prefix.trim().length > 90 || postfix.trim().length > 90) throw fail('Gebruik maximaal 90 tekens voor prefix en postfix.');
+  if (typeof prefix !== 'string' || typeof postfix !== 'string' || prefix.trim().length > 90 || postfix.trim().length > 90) throw fail('Use no more than 90 characters for the prefix and postfix.');
   const quantity = Number(req.body.quantity ?? 1);
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw fail('Kies een geheel aantal tussen 1 en 200 palletten.');
-  if (name && quantity > 1) throw fail('Meerdere palletten krijgen automatisch een naam. Laat de naam leeg.');
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw fail('Choose a whole quantity from 1 to 200 pallets.');
+  if (name && quantity > 1) throw fail('Multiple pallets are named automatically. Leave the name blank.');
   const pallets = [];
   db.exec('BEGIN IMMEDIATE');
   try {
     const existing = db.prepare('SELECT name FROM pallets WHERE shipmentId=?').all(req.params.id);
-    if (name && existing.some(pallet => objectNameKey(pallet.name) === objectNameKey(name))) throw fail('Er bestaat al een pallet met deze naam.');
+    if (name && existing.some(pallet => objectNameKey(pallet.name) === objectNameKey(name))) throw fail('A pallet with this name already exists.');
     const start = nextPalletNumber(existing, prefix, postfix);
     const insert = db.prepare('INSERT INTO pallets (id, shipmentId, name, photo) VALUES (?, ?, ?, NULL)');
     for (let i = 0; i < quantity; i++) {
       const pallet = { id: randomUUID(), name: name || palletName(start + i, prefix, postfix), shipmentId: req.params.id, photo: null, photos: [], statuses: {} };
-      if (existing.some(p => objectNameKey(p.name) === objectNameKey(pallet.name))) throw fail('Er bestaat al een pallet met deze naam.');
+      if (existing.some(p => objectNameKey(p.name) === objectNameKey(pallet.name))) throw fail('A pallet with this name already exists.');
       insert.run(pallet.id, pallet.shipmentId, pallet.name); pallets.push(pallet);
     }
     db.exec('COMMIT');
@@ -176,19 +176,19 @@ app.post('/api/shipments/:id/pallets', (req, res) => {
 });
 app.patch('/api/pallets/:id', (req, res) => {
   const pallet = db.prepare('SELECT * FROM pallets WHERE id=?').get(req.params.id);
-  if (!pallet) throw fail('Pallet niet gevonden.', 404);
+  if (!pallet) throw fail('Pallet not found.', 404);
   requireShipment(req.user, pallet.shipmentId);
   checkRevision(req.body, palletView(pallet).revision);
-  if (!('name' in req.body) && !('status' in req.body)) throw fail('Geef een naam of status op.');
+  if (!('name' in req.body) && !('status' in req.body)) throw fail('Specify a name or status.');
   let name = pallet.name;
   if ('name' in req.body) {
-    if (typeof req.body.name !== 'string' || !req.body.name.trim() || req.body.name.trim().length > 200) throw fail('Geef een palletnaam van maximaal 200 tekens.');
+    if (typeof req.body.name !== 'string' || !req.body.name.trim() || req.body.name.trim().length > 200) throw fail('Enter a pallet name of up to 200 characters.');
     name = req.body.name.trim();
-    if (db.prepare('SELECT id, name FROM pallets WHERE shipmentId=? AND id<>?').all(pallet.shipmentId, pallet.id).some(p => objectNameKey(p.name) === objectNameKey(name))) throw fail('Er bestaat al een pallet met deze naam.');
+    if (db.prepare('SELECT id, name FROM pallets WHERE shipmentId=? AND id<>?').all(pallet.shipmentId, pallet.id).some(p => objectNameKey(p.name) === objectNameKey(name))) throw fail('A pallet with this name already exists.');
   }
   const statuses = JSON.parse(pallet.statuses);
   if ('status' in req.body) {
-    if (!['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse'].includes(req.body.status) || typeof req.body.checked !== 'boolean') throw fail('Ongeldige status.');
+    if (!['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse'].includes(req.body.status) || typeof req.body.checked !== 'boolean') throw fail('Invalid status.');
     statuses[req.body.status] = req.body.checked ? new Date().toISOString() : null;
   }
   db.prepare('UPDATE pallets SET name=?, statuses=? WHERE id=?').run(name, JSON.stringify(statuses), pallet.id);
@@ -196,7 +196,7 @@ app.patch('/api/pallets/:id', (req, res) => {
 });
 app.delete('/api/pallets/:id', (req, res) => {
   const pallet = db.prepare('SELECT * FROM pallets WHERE id=?').get(req.params.id);
-  if (!pallet) throw fail('Pallet niet gevonden.', 404);
+  if (!pallet) throw fail('Pallet not found.', 404);
   requireShipment(req.user, pallet.shipmentId);
   checkRevision(req.body, palletView(pallet).revision);
   const photos = db.prepare('SELECT url FROM pallet_photos WHERE palletId=?').all(pallet.id);
@@ -209,23 +209,23 @@ app.delete('/api/pallets/:id', (req, res) => {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   for (const photo of photos) {
     try { unlinkSync(path.join(dataDir, 'uploads', path.basename(photo.url))); }
-    catch (error) { if (error.code !== 'ENOENT') console.error('Palletfoto opruimen mislukt:', error.code); }
+    catch (error) { if (error.code !== 'ENOENT') console.error('Failed to clean up pallet photo:', error.code); }
   }
   res.json({ ok: true });
 });
 app.post('/api/shipments/:id/items', (req, res) => {
   requireShipment(req.user, req.params.id);
   const rows = req.body.rows;
-  if (!Array.isArray(rows) || !rows.length || rows.length > 2000) throw fail('Voeg 1 tot 2000 materiaalregels toe.');
+  if (!Array.isArray(rows) || !rows.length || rows.length > 2000) throw fail('Add 1 to 2000 equipment rows.');
   let total = 0;
   const prepared = rows.map(row => {
     const name = clean(row.name), code = clean(row.code), note = clean(row.note, 1000), quantity = Number(row.quantity ?? 1), palletId = row.palletId || null;
-    if (!name || !Number.isInteger(quantity) || quantity < 1 || quantity > 2000) throw fail('Elke regel heeft een omschrijving en een geheel aantal tussen 1 en 2000 nodig.');
+    if (!name || !Number.isInteger(quantity) || quantity < 1 || quantity > 2000) throw fail('Each row needs a description and a whole quantity from 1 to 2000.');
     if (palletId) requirePallet(palletId, req.params.id);
     total += quantity;
     return { name, code, note, quantity, palletId };
   });
-  if (total > 2000) throw fail('Voeg maximaal 2000 objecten tegelijk toe.');
+  if (total > 2000) throw fail('Add no more than 2000 items at a time.');
   db.exec('BEGIN');
   try {
     const numbers = new Map();
@@ -243,18 +243,18 @@ app.post('/api/shipments/:id/items', (req, res) => {
 });
 app.patch('/api/items/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM items WHERE id=?').get(req.params.id);
-  if (!item) throw fail('Object niet gevonden.', 404);
+  if (!item) throw fail('Item not found.', 404);
   requireShipment(req.user, item.shipmentId);
   checkRevision(req.body, revision(item));
-  if ('status' in req.body && (!['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse'].includes(req.body.status) || typeof req.body.checked !== 'boolean')) throw fail('Ongeldige status.');
+  if ('status' in req.body && (!['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse'].includes(req.body.status) || typeof req.body.checked !== 'boolean')) throw fail('Invalid status.');
   const updated = { ...item };
   for (const [key, max] of [['name', 200], ['code', 200], ['note', 1000]]) {
     if (key in req.body) {
-      if (typeof req.body[key] !== 'string' || req.body[key].trim().length > max) throw fail(`Ongeldige ${key === 'name' ? 'omschrijving' : key === 'code' ? 'artikelcode' : 'opmerking'}.`);
+      if (typeof req.body[key] !== 'string' || req.body[key].trim().length > max) throw fail(`Invalid ${key === 'name' ? 'description' : key === 'code' ? 'item code' : 'note'}.`);
       updated[key] = req.body[key].trim();
     }
   }
-  if (!updated.name) throw fail('Geef het object een omschrijving.');
+  if (!updated.name) throw fail('Enter an item description.');
   if ('palletId' in req.body) {
     const palletId = req.body.palletId || null;
     if (palletId) requirePallet(palletId, item.shipmentId);
@@ -279,7 +279,7 @@ app.patch('/api/items/:id', (req, res) => {
 });
 app.delete('/api/items/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM items WHERE id=?').get(req.params.id);
-  if (!item) throw fail('Object niet gevonden.', 404);
+  if (!item) throw fail('Item not found.', 404);
   requireShipment(req.user, item.shipmentId);
   checkRevision(req.body, revision(item));
   db.prepare('DELETE FROM items WHERE id=?').run(item.id);
@@ -288,21 +288,21 @@ app.delete('/api/items/:id', (req, res) => {
 const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 10 } });
 app.post(['/api/pallets/:id/photo', '/api/pallets/:id/photos'], (req, res, next) => {
   const pallet = db.prepare('SELECT shipmentId FROM pallets WHERE id=?').get(req.params.id);
-  if (!pallet) throw fail('Pallet niet gevonden.', 404);
+  if (!pallet) throw fail('Pallet not found.', 404);
   const shipment = requireShipment(req.user, pallet.shipmentId);
-  if (shipment.archivedAt) throw fail('Herstel de shipment voordat je nieuwe foto’s toevoegt.', 409);
+  if (shipment.archivedAt) throw fail('Restore the shipment before adding new photos.', 409);
   next();
 }, photoUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'files', maxCount: 10 }]), (req, res) => {
   const pallet = db.prepare('SELECT shipmentId FROM pallets WHERE id=?').get(req.params.id);
-  if (!pallet) throw fail('Pallet niet gevonden.', 404);
+  if (!pallet) throw fail('Pallet not found.', 404);
   const shipment = requireShipment(req.user, pallet.shipmentId);
-  if (archiving.has(shipment.id) || shipment.archivedAt) throw fail('De shipment wordt gearchiveerd of staat in het archief. Herstel deze voordat je foto’s toevoegt.', 409);
+  if (archiving.has(shipment.id) || shipment.archivedAt) throw fail('This shipment is being archived or is archived. Restore it before adding photos.', 409);
   const files = [...(req.files?.file || []), ...(req.files?.files || [])];
-  if (!files.length) throw fail('Selecteer minstens één foto.');
+  if (!files.length) throw fail('Select at least one photo.');
   const photos = files.map(file => {
     const bytes = file.buffer;
     const extension = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'jpg' : bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'png' : bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP' ? 'webp' : null;
-    if (!extension) throw fail('Gebruik JPG-, PNG- of WebP-foto’s.');
+    if (!extension) throw fail('Use JPG, PNG or WebP photos.');
     const id = randomUUID();
     return { id, palletId: req.params.id, url: `/uploads/${id}.${extension}`, createdAt: new Date().toISOString(), bytes };
   });
@@ -321,14 +321,14 @@ app.post(['/api/pallets/:id/photo', '/api/pallets/:id/photos'], (req, res, next)
 });
 app.delete('/api/pallets/:id/photos/:photoId', (req, res) => {
   const photo = db.prepare('SELECT ph.*, p.shipmentId FROM pallet_photos ph JOIN pallets p ON p.id=ph.palletId WHERE ph.id=? AND ph.palletId=?').get(req.params.photoId, req.params.id);
-  if (!photo) throw fail('Foto niet gevonden.', 404);
+  if (!photo) throw fail('Photo not found.', 404);
   requireShipment(req.user, photo.shipmentId);
   try { unlinkSync(path.join(dataDir, 'uploads', path.basename(photo.url))); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   db.prepare('DELETE FROM pallet_photos WHERE id=?').run(photo.id);
   res.json({ ok: true });
 });
 app.post('/api/import-preview', upload.single('file'), async (req, res) => {
-  if (!req.file) throw fail('Selecteer een materiaallijst.');
+  if (!req.file) throw fail('Select an equipment list.');
   const ext = path.extname(req.file.originalname).toLowerCase();
   let rows, warning = '', pdfMetadata = {};
   if (ext === '.csv') {
@@ -339,24 +339,24 @@ app.post('/api/import-preview', upload.single('file'), async (req, res) => {
   } else if (['.xlsx', '.xls'].includes(ext)) {
     const book = XLSX.read(req.file.buffer, { type: 'buffer' });
     rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, defval: '' });
-    warning = 'Het eerste werkblad is ingelezen. Controleer de kolommen en aantallen.';
+    warning = 'The first worksheet has been read. Check the columns and quantities.';
   } else if (ext === '.pdf') {
     const result = await extractPdfRows(req.file.buffer);
     rows = result.rows; warning = result.warning;
     pdfMetadata = { hasHeader: result.hasHeader, columns: result.columns };
-  } else throw fail('Gebruik CSV, Excel (.xlsx/.xls) of PDF.');
+  } else throw fail('Use CSV, Excel (.xlsx/.xls) or PDF.');
   rows = rows.filter(row => row.some(v => String(v).trim()));
-  if (!rows.length) throw fail('Geen leesbaar materiaal gevonden. Gebruik voor een scan een CSV- of Excel-versie.');
-  if (rows.length > 2001) throw fail('Het bestand bevat te veel regels. Gebruik maximaal 2000 materiaalregels.');
+  if (!rows.length) throw fail('No readable equipment found. For a scan, use a CSV or Excel version.');
+  if (rows.length > 2001) throw fail('The file contains too many rows. Use no more than 2000 equipment rows.');
   res.json({ rows: rows.map(row => row.map(v => String(v).slice(0, 1000))), warning, pdf: ext === '.pdf', ...pdfMetadata });
 });
 app.use('/uploads', express.static(path.join(dataDir, 'uploads'), { cacheControl: false, etag: false, lastModified: false }));
-app.use('/api', (_, res) => res.status(404).json({ error: 'Endpoint niet gevonden.' }));
+app.use('/api', (_, res) => res.status(404).json({ error: 'Endpoint not found.' }));
 app.use(express.static(path.join(root, 'dist')));
 app.get('/{*path}', (_, res) => res.sendFile(path.join(root, 'dist', 'index.html')));
 app.use((error, req, res, next) => {
   console.error(error.message);
   const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : error.status || 400;
-  res.status(status).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Het bestand mag maximaal 15 MB zijn.' : error.code === 'LIMIT_FILE_COUNT' || error.code === 'LIMIT_UNEXPECTED_FILE' ? 'Upload maximaal 10 foto’s tegelijk.' : status >= 500 ? 'Er ging iets mis op de server.' : error.message });
+  res.status(status).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'The file must be no larger than 15 MB.' : error.code === 'LIMIT_FILE_COUNT' || error.code === 'LIMIT_UNEXPECTED_FILE' ? 'Upload up to 10 photos at a time.' : status >= 500 ? 'Something went wrong on the server.' : error.message });
 });
-app.listen(Number(process.env.PORT || 3001), '0.0.0.0', () => console.log('Palletshipper server gestart.'));
+app.listen(Number(process.env.PORT || 3001), '0.0.0.0', () => console.log('Palletshipper server started.'));

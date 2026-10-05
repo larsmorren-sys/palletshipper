@@ -90,7 +90,7 @@ export async function extractPdfRows(buffer) {
       }
     }
     const emptyPages = pages.filter(page => !page.length).length;
-    const warning = (columnCount > 1 ? `${columnCount} PDF-kolommen herkend${hasHeader ? ' met kolomnamen' : ' zonder herkenbare kolomnamen'}. Controleer de kolomkeuze, omschrijvingen en aantallen voor je importeert.` : 'Geen duidelijke PDF-kolommen gevonden. De tekst is per regel ingelezen; controleer omschrijvingen en aantallen.') + (emptyPages ? ` ${emptyPages} pagina('s) zonder leesbare tekst zijn niet verwerkt.` : '') + ' Gescande PDF’s worden nog niet ondersteund.';
+    const warning = (columnCount > 1 ? `${columnCount} PDF columns detected${hasHeader ? ' with headers' : ' without recognizable headers'}. Check column mapping, descriptions and quantities before importing.` : 'No clear PDF columns detected. Text was read line by line; check descriptions and quantities.') + (emptyPages ? ` ${emptyPages} pages without readable text were not processed.` : '') + ' Scanned PDFs are not supported yet.';
     return { rows, hasHeader, columns, warning };
   } finally { await task.destroy(); }
 }

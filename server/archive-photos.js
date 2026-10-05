@@ -32,7 +32,7 @@ export async function archiveShipment(db, dataDir, shipmentId) {
   } finally {
     for (const entry of prepared) {
       const filename = committed ? entry.original : entry.filename;
-      if (filename) await unlink(filename).catch(error => { if (error.code !== 'ENOENT') console.error('Archieffoto opruimen mislukt:', error.code); });
+      if (filename) await unlink(filename).catch(error => { if (error.code !== 'ENOENT') console.error('Failed to clean up archive photo:', error.code); });
     }
   }
 }

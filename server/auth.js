@@ -12,7 +12,7 @@ const fail = (message, status = 400) => Object.assign(new Error(message), { stat
 const safeUser = row => ({ id: row.id, name: row.name, email: row.email, role: row.role, active: !!row.active });
 const normalizeEmail = value => String(value || '').trim().toLowerCase();
 const passwordOptions = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 };
-function validPassword(password) { if (typeof password !== 'string' || password.length < 12 || password.length > 256) throw fail('Gebruik een wachtwoord van 12 tot 256 tekens.'); }
+function validPassword(password) { if (typeof password !== 'string' || password.length < 12 || password.length > 256) throw fail('Use a password of 12 to 256 characters.'); }
 async function hashPassword(password) {
   validPassword(password);
   const salt = randomBytes(16).toString('hex');
@@ -26,8 +26,8 @@ async function checkPassword(password, hash) {
 }
 function userInput(body) {
   const name = String(body.name || '').trim(), email = normalizeEmail(body.email), role = body.role ?? 'member';
-  if (!name || name.length > 200 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw fail('Vul een naam en geldig e-mailadres in.');
-  if (!['admin', 'member'].includes(role)) throw fail('Ongeldige gebruikersrol.');
+  if (!name || name.length > 200 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw fail('Enter a name and a valid email address.');
+  if (!['admin', 'member'].includes(role)) throw fail('Invalid user role.');
   return { name, email, role };
 }
 
@@ -59,11 +59,11 @@ export function installAuth(app, db, dataDir) {
     res.cookie(cookieName, token, cookieOptions);
     return { user: safeUser(user), csrfToken, setupRequired: false };
   };
-  const admin = req => { if (req.user.role !== 'admin') throw fail('Alleen beheerders mogen gebruikers beheren.', 403); };
+  const admin = req => { if (req.user.role !== 'admin') throw fail('Only administrators can manage users.', 403); };
   const canManage = (user, shipment) => user.role === 'admin' || shipment.ownerId === user.id;
   const requireShipment = (user, id, manage = false) => {
     const shipment = db.prepare('SELECT * FROM shipments WHERE id=?').get(id);
-    if (!shipment || !(canManage(user, shipment) || !manage && db.prepare('SELECT 1 FROM shipment_access WHERE shipmentId=? AND userId=?').get(id, user.id))) throw fail('Shipment niet gevonden of geen toegang.', 404);
+    if (!shipment || !(canManage(user, shipment) || !manage && db.prepare('SELECT 1 FROM shipment_access WHERE shipmentId=? AND userId=?').get(id, user.id))) throw fail('Shipment not found or access denied.', 404);
     return shipment;
   };
   const viewShipment = (user, shipment) => ({ ...shipment, revision: revision(db.prepare('SELECT * FROM shipments WHERE id=?').get(shipment.id)), canManage: canManage(user, shipment) });
@@ -71,7 +71,7 @@ export function installAuth(app, db, dataDir) {
     const key = `${scope}:${req.ip}`, now = Date.now();
     db.prepare('DELETE FROM auth_attempts WHERE resetAt<=?').run(now);
     const row = db.prepare('SELECT * FROM auth_attempts WHERE key=?').get(key);
-    if (row && row.count >= 10) throw fail('Te veel pogingen. Probeer over 15 minuten opnieuw.', 429);
+    if (row && row.count >= 10) throw fail('Too many attempts. Try again in 15 minutes.', 429);
     db.prepare('INSERT INTO auth_attempts VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count=count+1').run(key, now + 15 * 60 * 1000);
     return key;
   }
@@ -83,7 +83,7 @@ export function installAuth(app, db, dataDir) {
   });
   // Custom headers and no CORS prevent cross-origin form submissions, including login CSRF.
   app.use('/api', (req, res, next) => {
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (req.headers['x-palletshipper'] !== '1' || req.headers['sec-fetch-site'] === 'cross-site')) throw fail('Ongeldige aanvraag. Herlaad de pagina.', 403);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (req.headers['x-palletshipper'] !== '1' || req.headers['sec-fetch-site'] === 'cross-site')) throw fail('Invalid request. Reload the page.', 403);
     next();
   });
   app.get('/api/auth/session', (req, res) => {
@@ -92,11 +92,11 @@ export function installAuth(app, db, dataDir) {
   });
   app.post('/api/auth/setup', async (req, res) => {
     const key = throttle(req, 'setup');
-    if (!setupRequired()) throw fail('De eerste beheerder is al aangemaakt.', 409);
-    if (!setupToken || !same(req.body.setupToken || '', setupToken)) throw fail('Ongeldige installatiecode.', 403);
+    if (!setupRequired()) throw fail('The first administrator has already been created.', 409);
+    if (!setupToken || !same(req.body.setupToken || '', setupToken)) throw fail('Invalid setup code.', 403);
     const input = userInput({ ...req.body, role: 'admin' });
     const passwordHash = await hashPassword(req.body.password);
-    if (!setupRequired()) throw fail('De eerste beheerder is al aangemaakt.', 409);
+    if (!setupRequired()) throw fail('The first administrator has already been created.', 409);
     const user = { id: randomUUID(), ...input, active: 1 };
     db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, 1)').run(user.id, user.name, user.email, passwordHash, 'admin');
     db.prepare('DELETE FROM auth_attempts WHERE key=?').run(key);
@@ -107,19 +107,19 @@ export function installAuth(app, db, dataDir) {
     const key = throttle(req, 'login');
     const user = db.prepare('SELECT * FROM users WHERE email=?').get(normalizeEmail(req.body.email));
     const valid = await checkPassword(req.body.password, user?.passwordHash || `${'0'.repeat(32)}:${'0'.repeat(128)}`);
-    if (!user || !user.active || !valid) throw fail('E-mailadres of wachtwoord is onjuist.', 401);
+    if (!user || !user.active || !valid) throw fail('Incorrect email address or password.', 401);
     // Re-read after password derivation so deactivation/reset immediately takes effect.
     const current = db.prepare('SELECT * FROM users WHERE id=?').get(user.id);
-    if (!current.active || current.passwordHash !== user.passwordHash) throw fail('E-mailadres of wachtwoord is onjuist.', 401);
+    if (!current.active || current.passwordHash !== user.passwordHash) throw fail('Incorrect email address or password.', 401);
     db.prepare('DELETE FROM auth_attempts WHERE key=?').run(key);
     res.json(issueSession(req, res, current));
   });
   app.use(['/api', '/uploads'], (req, res, next) => {
     if (req.path === '/health' && req.method === 'GET' && req.baseUrl === '/api') return next();
     const session = readSession(req);
-    if (!session) throw fail('Log in om verder te gaan.', 401);
+    if (!session) throw fail('Log in to continue.', 401);
     req.user = safeUser(session); req.session = session;
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !same(req.headers['x-csrf-token'] || '', session.csrfToken)) throw fail('Ongeldige sessie. Herlaad de pagina.', 403);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !same(req.headers['x-csrf-token'] || '', session.csrfToken)) throw fail('Invalid session. Reload the page.', 403);
     next();
   });
   app.post('/api/auth/logout', (req, res) => {
@@ -129,10 +129,10 @@ export function installAuth(app, db, dataDir) {
   app.post('/api/auth/password', async (req, res) => {
     throttle(req, 'password');
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
-    if (!await checkPassword(req.body.currentPassword, user.passwordHash)) throw fail('Huidig wachtwoord is onjuist.');
+    if (!await checkPassword(req.body.currentPassword, user.passwordHash)) throw fail('Incorrect current password.');
     const passwordHash = await hashPassword(req.body.password);
     const current = db.prepare('SELECT * FROM users WHERE id=?').get(user.id);
-    if (!readSession(req) || current.passwordHash !== user.passwordHash) throw fail('Je sessie is gewijzigd. Log opnieuw in.', 401);
+    if (!readSession(req) || current.passwordHash !== user.passwordHash) throw fail('Your session has changed. Log in again.', 401);
     db.prepare('UPDATE users SET passwordHash=? WHERE id=?').run(passwordHash, user.id);
     db.prepare('DELETE FROM sessions WHERE userId=?').run(user.id);
     res.json(issueSession(req, res, current));
@@ -140,26 +140,26 @@ export function installAuth(app, db, dataDir) {
   app.get('/api/users', (req, res) => { admin(req); res.json(db.prepare('SELECT * FROM users ORDER BY name').all().map(safeUser)); });
   app.post('/api/users', async (req, res) => {
     admin(req); const input = userInput(req.body);
-    if (db.prepare('SELECT id FROM users WHERE email=?').get(input.email)) throw fail('Dit e-mailadres is al in gebruik.');
+    if (db.prepare('SELECT id FROM users WHERE email=?').get(input.email)) throw fail('This email address is already in use.');
     const passwordHash = await hashPassword(req.body.password);
     const user = { id: randomUUID(), ...input, active: 1 };
     admin({ user: db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(req.user.id) || { role: 'member' } });
     try { db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, 1)').run(user.id, user.name, user.email, passwordHash, user.role); }
-    catch { throw fail('Dit e-mailadres is al in gebruik.'); }
+    catch { throw fail('This email address is already in use.'); }
     res.status(201).json(safeUser(user));
   });
   app.patch('/api/users/:id', async (req, res) => {
     admin(req);
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
-    if (!user) throw fail('Gebruiker niet gevonden.', 404);
+    if (!user) throw fail('User not found.', 404);
     const input = userInput({ ...user, ...req.body });
     const active = 'active' in req.body ? req.body.active : !!user.active;
-    if (typeof active !== 'boolean') throw fail('Ongeldige accountstatus.');
+    if (typeof active !== 'boolean') throw fail('Invalid account status.');
     const passwordHash = 'password' in req.body ? await hashPassword(req.body.password) : user.passwordHash;
     admin({ user: db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(req.user.id) || { role: 'member' } });
     const current = db.prepare('SELECT * FROM users WHERE id=?').get(user.id);
-    if (current.role === 'admin' && current.active && (!active || input.role !== 'admin') && db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1").get().n <= 1) throw fail('Er moet minstens één actieve beheerder blijven.');
-    if (db.prepare('SELECT id FROM users WHERE email=? AND id<>?').get(input.email, user.id)) throw fail('Dit e-mailadres is al in gebruik.');
+    if (current.role === 'admin' && current.active && (!active || input.role !== 'admin') && db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1").get().n <= 1) throw fail('At least one active administrator must remain.');
+    if (db.prepare('SELECT id FROM users WHERE email=? AND id<>?').get(input.email, user.id)) throw fail('This email address is already in use.');
     db.prepare('UPDATE users SET name=?, email=?, role=?, active=?, passwordHash=? WHERE id=?').run(input.name, input.email, input.role, Number(active), passwordHash, user.id);
     if ('password' in req.body || input.role !== current.role || !active) db.prepare('DELETE FROM sessions WHERE userId=?').run(user.id);
     res.json(safeUser({ ...user, ...input, active }));
@@ -173,7 +173,7 @@ export function installAuth(app, db, dataDir) {
   app.put('/api/shipments/:id/access', (req, res) => {
     requireShipment(req.user, req.params.id, true);
     const ids = req.body.userIds;
-    if (!Array.isArray(ids) || ids.length > 1000 || ids.some(id => typeof id !== 'string' || !db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(id))) throw fail('Selecteer geldige actieve gebruikers.');
+    if (!Array.isArray(ids) || ids.length > 1000 || ids.some(id => typeof id !== 'string' || !db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(id))) throw fail('Select valid active users.');
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM shipment_access WHERE shipmentId=?').run(req.params.id);
@@ -191,7 +191,7 @@ export function installAuth(app, db, dataDir) {
   app.put(['/api/shipments/:id/columns', '/api/shipments/:id/pallet-columns'], (req, res) => {
     requireShipment(req.user, req.params.id);
     const columns = req.body.columns;
-    if (!columns || Object.keys(columns).length !== stages.length || stages.some(([key]) => typeof columns[key] !== 'boolean')) throw fail('Kies de zichtbaarheid van alle vier kolommen.');
+    if (!columns || Object.keys(columns).length !== stages.length || stages.some(([key]) => typeof columns[key] !== 'boolean')) throw fail('Set the visibility of all four columns.');
     const field = req.path.endsWith('/pallet-columns') ? 'palletColumns' : 'columns';
     db.prepare(`INSERT INTO column_preferences (shipmentId, userId, columns, palletColumns) VALUES (?, ?, ?, ?) ON CONFLICT(shipmentId,userId) DO UPDATE SET ${field}=excluded.${field}`).run(req.params.id, req.user.id, JSON.stringify(field === 'columns' ? columns : defaultColumns), JSON.stringify(field === 'palletColumns' ? columns : defaultColumns));
     res.json({ columns });
@@ -199,7 +199,7 @@ export function installAuth(app, db, dataDir) {
   app.use('/uploads', (req, res, next) => {
     const photo = `/uploads${req.path}`;
     const pallet = db.prepare('SELECT p.shipmentId FROM pallet_photos ph JOIN pallets p ON p.id=ph.palletId WHERE ph.url=?').get(photo);
-    if (!pallet) throw fail('Foto niet gevonden.', 404);
+    if (!pallet) throw fail('Photo not found.', 404);
     requireShipment(req.user, pallet.shipmentId); next();
   });
   return { requireShipment, canManage, viewShipment, getColumns };

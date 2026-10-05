@@ -66,7 +66,7 @@ before(async () => {
   assert.equal((await request('/auth/setup', 'POST', { setupToken, name: 'Second', email: 'second@example.test', password: 'test-password-123' })).status, 409);
 });
 after(async () => { await stop(); rmSync(dir, { recursive: true, force: true }); });
-test('Objecten krijgen onafhankelijke tracking, geldige palletten en blijvende opslag', async () => {
+test('Items have independent tracking, valid pallets and persistent storage', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Testshipment', destination: 'Antwerpen' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { name: 'Pallet 1' })).data;
   assert.equal((await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Lamp', code: 'L001', quantity: 2, palletId: pallet.id }] })).data.added, 2);
@@ -88,18 +88,18 @@ test('Objecten krijgen onafhankelijke tracking, geldige palletten en blijvende o
   assert.equal((await request(`/items/${id}`, 'PATCH', { status: 'outWarehouse', checked: false })).data.statuses.outWarehouse, null);
   assert.equal((await request(`/items/${id}`, 'PATCH', { palletId: null })).data.palletId, null);
 });
-test('CSV en Excel leveren een controleerbare import zonder objecten automatisch toe te voegen', async () => {
-  const csv = new FormData(); csv.append('file', new Blob(['Omschrijving;Code;Aantal\n"Lamp; groot";L1;3\nKabel;K1;2']), 'materiaal.csv');
+test('CSV and Excel provide reviewable imports without adding items automatically', async () => {
+  const csv = new FormData(); csv.append('file', new Blob(['Description;Code;Quantity\n"Lamp; groot";L1;3\nKabel;K1;2']), 'materiaal.csv');
   const result = await request('/import-preview', 'POST', csv);
   assert.equal(result.status, 200); assert.equal(result.data.rows[1][0], 'Lamp; groot'); assert.equal(result.data.rows[1][2], '3');
-  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['Omschrijving', 'Aantal'], ['Scherm', 2]]), 'Materiaal');
+  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['Description', 'Quantity'], ['Scherm', 2]]), 'Materiaal');
   const excel = new FormData(); excel.append('file', new Blob([XLSX.write(book, { type: 'buffer', bookType: 'xlsx' })]), 'materiaal.xlsx');
   const preview = await request('/import-preview', 'POST', excel);
   assert.equal(preview.status, 200); assert.equal(preview.data.rows[1][0], 'Scherm'); assert.equal(preview.data.rows[1][1], '2');
   const invalid = new FormData(); invalid.append('file', new Blob(['test']), 'materiaal.txt');
   assert.equal((await request('/import-preview', 'POST', invalid)).status, 400);
 });
-test('Palletfoto wordt opgeslagen en niet-afbeeldingen worden geweigerd', async () => {
+test('Pallet photos are stored and non-images are rejected', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Fototest' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { name: 'Fotopallet' })).data;
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=', 'base64');
@@ -111,7 +111,7 @@ test('Palletfoto wordt opgeslagen en niet-afbeeldingen worden geweigerd', async 
   const invalid = new FormData(); invalid.append('file', new Blob(['<html>test</html>'], { type: 'image/png' }), 'fake.png');
   assert.equal((await request(`/pallets/${pallet.id}/photo`, 'POST', invalid)).status, 400);
 });
-test('Een tekst-PDF levert leesbare regels op voor handmatige controle', async () => {
+test('Text PDFs produce readable rows for review', async () => {
   const content = 'BT /F1 12 Tf 50 750 Td (LED scherm) Tj 0 -20 Td (Kabel) Tj ET';
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', `<< /Length ${content.length} >>\nstream\n${content}\nendstream`];
   let pdf = '%PDF-1.4\n'; const offsets = [0];
@@ -122,9 +122,9 @@ test('Een tekst-PDF levert leesbare regels op voor handmatige controle', async (
   const result = await request('/import-preview', 'POST', form);
   assert.equal(result.status, 200); assert.equal(result.data.pdf, true);
   assert.ok(result.data.rows.some(row => row[0].includes('LED scherm')));
-  assert.ok(result.data.warning.includes('Gescande'));
+  assert.ok(result.data.warning.includes('Scanned'));
 });
-test('PDF-kolommen herkennen kopregels, lege cellen en doorlopende omschrijvingen over meerdere pagina’s', async () => {
+test('PDF columns recognize headers, empty cells and wrapped descriptions across pages', async () => {
   const page1 = [pdfText(50, 790, 'Material list'), pdfText(50, 750, 'Code'), pdfText(170, 750, 'Description'), pdfText(460, 750, 'Qty'),
     // Intentionally emit cells out of reading order and split description words.
     pdfText(475, 724, '2'), pdfText(197, 724, 'screen'), pdfText(50, 724, 'L001'), pdfText(170, 724, 'LED'), pdfText(170, 704, 'with mounting bracket'),
@@ -135,22 +135,22 @@ test('PDF-kolommen herkennen kopregels, lege cellen en doorlopende omschrijvinge
     assert.equal(result.status, 200); assert.equal(result.data.hasHeader, true);
     assert.deepEqual(result.data.columns, { name: 1, code: 0, quantity: 2 });
     assert.deepEqual(result.data.rows, [['Code', 'Description', 'Qty'], ['L001', 'LED screen with mounting bracket', '2'], ['', 'Cable', '3'], ['S002', 'Speaker', '1']]);
-    assert.ok(result.data.warning.includes('3 PDF-kolommen'));
+    assert.ok(result.data.warning.includes('3 PDF columns'));
   }
 });
-test('PDF zonder kopregels behoudt alle materiaalregels en lege cellen', async () => {
+test('PDFs without headers preserve every equipment row and empty cell', async () => {
   const page = [pdfText(50, 750, 'L001'), pdfText(170, 750, 'Lamp'), pdfText(475, 750, '2'), pdfText(170, 724, 'Cable'), pdfText(475, 724, '3'), pdfText(50, 698, 'S001'), pdfText(170, 698, 'Speaker'), pdfText(475, 698, '1')].join('\n');
   const result = await previewPdf([page]);
   assert.equal(result.status, 200); assert.equal(result.data.hasHeader, false);
   assert.deepEqual(result.data.rows, [['L001', 'Lamp', '2'], ['', 'Cable', '3'], ['S001', 'Speaker', '1']]);
-  assert.ok(result.data.warning.includes('zonder herkenbare kolomnamen'));
+  assert.ok(result.data.warning.includes('without recognizable headers'));
 });
-test('Gescande pagina’s worden gemeld en een PDF zonder leesbare tekst wordt geweigerd', async () => {
+test('Scanned pages are reported and PDFs without readable text are rejected', async () => {
   const result = await previewPdf([pdfText(50, 750, 'Lamp'), '']);
-  assert.equal(result.status, 200); assert.ok(result.data.warning.includes('1 pagina'));
+  assert.equal(result.status, 200); assert.ok(result.data.warning.includes('1 pages'));
   assert.equal((await previewPdf([''])).status, 400);
 });
-test('Palletten in bulk krijgen doorlopende nummering per shipment', async () => {
+test('Bulk pallets receive consecutive numbering per shipment', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Bulkpalletten' })).data;
   const endpoint = `/shipments/${shipment.id}/pallets`;
   assert.deepEqual((await request(endpoint, 'POST', { quantity: 3 })).data.pallets.map(p => p.name), ['Pallet 1', 'Pallet 2', 'Pallet 3']);
@@ -166,7 +166,7 @@ test('Palletten in bulk krijgen doorlopende nummering per shipment', async () =>
   const other = (await request('/shipments', 'POST', { name: 'Nieuwe nummering' })).data;
   assert.equal((await request(`/shipments/${other.id}/pallets`, 'POST', { quantity: 1 })).data.pallets[0].name, 'Pallet 1');
 });
-test('Objectnummering loopt per naam door over toevoegingen, imports en palletwissels', async () => {
+test('Item numbering continues per name across additions, imports and pallet changes', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Objectnummering' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'LED-scherm', quantity: 2 }, { name: 'Kabel', quantity: 1 }] });
@@ -184,7 +184,7 @@ test('Objectnummering loopt per naam door over toevoegingen, imports en palletwi
   await request(`/shipments/${other.id}/items`, 'POST', { rows: [{ name: 'LED-scherm' }] });
   assert.equal((await request(`/shipments/${other.id}`)).data.items[0].displayName, 'LED-scherm 1');
 });
-test('Bestaande objecten krijgen blijvende nummers met behoud van tracking en pallet', async () => {
+test('Existing items receive stable numbers without losing tracking or assignment', async () => {
   let data = (await request('/shipments/legacy')).data;
   assert.deepEqual(data.items.map(i => i.displayName), ['Lamp 1', 'Lamp 2']);
   assert.equal(data.items[0].palletId, 'legacy-pallet');
@@ -196,14 +196,14 @@ test('Bestaande objecten krijgen blijvende nummers met behoud van tracking en pa
   assert.deepEqual(pallets.pallets.map(p => p.name), ['Pallet 5', 'Pallet 6']);
 });
 
-async function createMember(email, name = 'Gebruiker', role = 'member') {
+async function createMember(email, name = 'User', role = 'member') {
   const result = await request('/users', 'POST', { name, email, role, password: 'member-password-123' });
   assert.equal(result.status, 201); assert.equal('passwordHash' in result.data, false);
   const session = { cookie: '', csrfToken: '' };
   assert.equal((await request('/auth/login', 'POST', { email, password: 'member-password-123' }, session)).status, 200);
   return { user: result.data, session };
 }
-test('Login en CSRF zijn verplicht; gebruikers kunnen zichzelf niet tot beheerder maken', async () => {
+test('Login and CSRF are required and users cannot promote themselves', async () => {
   const { session } = await createMember('security@example.test');
   assert.equal((await request('/users', 'GET', undefined, session)).status, 403);
   assert.equal((await request('/users', 'POST', { role: 'admin' }, session)).status, 403);
@@ -215,7 +215,7 @@ test('Login en CSRF zijn verplicht; gebruikers kunnen zichzelf niet tot beheerde
   assert.equal((await request('/auth/logout', 'POST', undefined, session)).status, 200);
   assert.equal((await request('/shipments', 'GET', undefined, session)).status, 401);
 });
-test('Shipmenttoewijzing beschermt lijsten, objecten, palletten en foto’s en kan worden ingetrokken', async () => {
+test('Shipment permissions protect lists, items, pallets and photos and can be revoked', async () => {
   const owner = await createMember('owner@example.test', 'Maker');
   const member = await createMember('assigned@example.test', 'Toegewezen');
   const shipment = (await request('/shipments', 'POST', { name: 'Privéshipment', ownerId: 'legacy' }, owner.session)).data;
@@ -249,7 +249,7 @@ test('Shipmenttoewijzing beschermt lijsten, objecten, palletten en foto’s en k
   assert.ok((await request(endpoint)).data.items[0].statuses.outWarehouse);
   assert.equal((await request('/shipments/legacy', 'GET', undefined, member.session)).status, 404);
 });
-test('De vier kolommen kunnen onafhankelijk verborgen worden, per gebruiker en shipment, zonder statusverlies', async () => {
+test('Tracking columns can be hidden independently per user and shipment without losing status', async () => {
   const member = await createMember('columns@example.test');
   const shipment = (await request('/shipments', 'POST', { name: 'Kolommen' }, member.session)).data;
   const endpoint = `/shipments/${shipment.id}`;
@@ -274,7 +274,7 @@ test('De vier kolommen kunnen onafhankelijk verborgen worden, per gebruiker en s
   const other = (await request('/shipments', 'POST', { name: 'Andere kolommen' }, member.session)).data;
   assert.deepEqual((await request(`/shipments/${other.id}`, 'GET', undefined, member.session)).data.columns, all);
 });
-test('Gebruikersbeheer ondersteunt deactiveren, wachtwoordreset en rolwijziging met sessie-intrekking', async () => {
+test('User management supports deactivation, password resets and session revocation', async () => {
   const currentAdmin = (await request('/auth/session')).data.user;
   assert.equal((await request(`/users/${currentAdmin.id}`, 'PATCH', { role: 'member' })).status, 400);
   assert.equal((await request(`/users/${currentAdmin.id}`, 'PATCH', { active: false })).status, 400);
@@ -292,7 +292,7 @@ test('Gebruikersbeheer ondersteunt deactiveren, wachtwoordreset en rolwijziging 
   assert.equal((await request('/users', 'GET', undefined, session)).status, 200);
   await request(`/users/${user.id}`, 'PATCH', { role: 'member' });
 });
-test('Eigen wachtwoordwijziging beëindigt andere sessies; wachtwoorden en sessietokens worden niet leesbaar opgeslagen', async () => {
+test('Password changes terminate other sessions and secrets are not stored as plaintext', async () => {
   const { user, session } = await createMember('password@example.test');
   const other = { cookie: '', csrfToken: '' };
   await request('/auth/login', 'POST', { email: user.email, password: 'member-password-123' }, other);
@@ -308,11 +308,11 @@ test('Eigen wachtwoordwijziging beëindigt andere sessies; wachtwoorden en sessi
   connection.prepare('UPDATE sessions SET expiresAt=0 WHERE userId=?').run(user.id); connection.close();
   assert.equal((await request('/shipments', 'GET', undefined, session)).status, 401);
 });
-test('Herhaalde ongeldige loginpogingen worden begrensd', async () => {
+test('Repeated invalid login attempts are limited', async () => {
   for (let i = 0; i < 10; i++) assert.equal((await request('/auth/login', 'POST', { email: 'unknown@example.test', password: 'wrong' }, null, { 'X-Forwarded-For': '192.0.2.23' })).status, 401);
   assert.equal((await request('/auth/login', 'POST', { email: 'unknown@example.test', password: 'wrong' }, null, { 'X-Forwarded-For': '192.0.2.23' })).status, 429);
 });
-test('Productiesessies gebruiken Secure-cookies en de publieke healthcheck blijft bereikbaar', async () => {
+test('Production sessions use Secure cookies and the public healthcheck remains accessible', async () => {
   await stop(); await start({ NODE_ENV: 'production' });
   const session = { cookie: '', csrfToken: '' };
   const result = await request('/auth/login', 'POST', { email: 'admin@example.test', password: 'test-password-123' }, session);
@@ -320,7 +320,7 @@ test('Productiesessies gebruiken Secure-cookies en de publieke healthcheck blijf
   assert.ok(result.headers.get('set-cookie').includes('Secure'));
   assert.equal((await request('/health', 'GET', undefined, null)).status, 200);
 });
-test('Objecten bewerken bewaart tracking en valideert alle wijzigingen voor het opslaan', async () => {
+test('Item editing preserves tracking and validates every change before saving', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Objectbewerking' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp', quantity: 2 }, { name: 'Kabel' }] });
@@ -343,7 +343,7 @@ test('Objecten bewerken bewaart tracking en valideert alle wijzigingen voor het 
   assert.equal((await request(endpoint)).data.items.length, 2);
   assert.equal((await request(`/items/${id}`, 'DELETE')).status, 404);
 });
-test('Verwijderen hergebruikt nooit objectnummers, ook na een herstart', async () => {
+test('Deleting items never reuses their numbers, including after a restart', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Verwijdernummering' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp', quantity: 2 }] });
@@ -353,7 +353,7 @@ test('Verwijderen hergebruikt nooit objectnummers, ook na een herstart', async (
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp' }] });
   assert.equal((await request(endpoint)).data.items[0].displayName, 'Lamp 3');
 });
-test('Meerdere foto’s per pallet blijven behouden; verwijderen is beveiligd en verwijdert één bestand', async () => {
+test('Multiple pallet photos are preserved and deletion removes only the selected file', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Fotogalerij' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   const pallet = (await request(`${endpoint}/pallets`, 'POST', { quantity: 1 })).data;
@@ -385,7 +385,7 @@ test('Meerdere foto’s per pallet blijven behouden; verwijderen is beveiligd en
   const tooMany = new FormData(); for (let i = 0; i < 11; i++) tooMany.append('files', new Blob([pngSample]), `foto-${i}.png`);
   assert.equal((await request(`/pallets/${pallet.id}/photos`, 'POST', tooMany)).status, 400);
 });
-test('Bestaande palletfoto wordt één keer overgenomen en komt na verwijderen niet terug', async () => {
+test('Legacy photos are migrated once and do not return after deletion', async () => {
   let pallet = (await request('/shipments/legacy')).data.pallets.find(p => p.id === 'legacy-pallet');
   assert.equal(pallet.photos.length, 1); assert.equal(pallet.photos[0].url, '/uploads/legacy.png');
   await stop(); await start();
@@ -394,17 +394,17 @@ test('Bestaande palletfoto wordt één keer overgenomen en komt na verwijderen n
   await stop(); await start();
   pallet = (await request('/shipments/legacy')).data.pallets.find(p => p.id === 'legacy-pallet'); assert.deepEqual(pallet.photos, []); assert.equal(pallet.photo, null);
 });
-test('Palletlijsten en A6-labels bevatten alleen de juiste pallet en respecteren toegang en kolomkeuze', async () => {
+test('Packing lists and A6 labels respect the selected pallet, permissions and column preferences', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Beurs <Antwerpen>', destination: 'Expo' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   const pallets = (await request(`${endpoint}/pallets`, 'POST', { quantity: 2 })).data.pallets;
-  await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp', quantity: 2, palletId: pallets[0].id, note: '=1+1' }, { name: 'Andere pallet', palletId: pallets[1].id }, { name: 'Niet toegewezen' }] });
+  await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp', quantity: 2, palletId: pallets[0].id, note: '=1+1' }, { name: 'Andere pallet', palletId: pallets[1].id }, { name: 'Unassigned' }] });
   await request(`${endpoint}/columns`, 'PUT', { columns: { outWarehouse: true, inLocation: false, outLocation: false, inWarehouse: false } });
   const url = `/api/pallets/${pallets[0].id}/export`;
   const get = (format, session = adminSession) => fetch(`http://127.0.0.1:${port}${url}?format=${format}`, { headers: session ? { Cookie: session.cookie } : {} });
   const csv = await get('csv'); const text = await csv.text();
   assert.equal(csv.status, 200); assert.ok(csv.headers.get('content-disposition').includes('.csv'));
-  assert.ok(text.includes('Lamp 1')); assert.ok(text.includes('Lamp 2')); assert.ok(text.includes("'=1+1")); assert.ok(text.includes('Out warehouse')); assert.ok(!text.includes('In location')); assert.ok(!text.includes('Andere pallet')); assert.ok(!text.includes('Niet toegewezen'));
+  assert.ok(text.includes('Lamp 1')); assert.ok(text.includes('Lamp 2')); assert.ok(text.includes("'=1+1")); assert.ok(text.includes('Out warehouse')); assert.ok(!text.includes('In location')); assert.ok(!text.includes('Andere pallet')); assert.ok(!text.includes('Unassigned'));
   const excel = await get('xlsx'); const book = XLSX.read(Buffer.from(await excel.arrayBuffer()), { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1 });
   assert.equal(rows.length, 3); assert.equal(rows[1][2], 'Lamp 1'); assert.equal(book.Sheets[book.SheetNames[0]].F2.f, undefined);
@@ -422,25 +422,25 @@ test('Palletlijsten en A6-labels bevatten alleen de juiste pallet en respecteren
   await stop(); await start(); assert.ok((await (await get('label')).text()).includes('data:image/png;base64,'));
   await request(`${endpoint}/logo`, 'DELETE'); assert.equal((await request(endpoint)).data.hasLogo, false);
 });
-test('Een volledige shipment exporteert alle palletlijsten en één A6-label per pallet', async () => {
+test('Whole shipment exports include every pallet list and one A6 label per pallet', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Volledige export' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   const pallets = (await request(`${endpoint}/pallets`, 'POST', { quantity: 3 })).data.pallets;
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp', quantity: 2, palletId: pallets[0].id }, { name: 'Kabel', palletId: pallets[1].id }, { name: 'Los object' }] });
   const get = (format, session = adminSession) => fetch(`http://127.0.0.1:${port}/api${endpoint}/export?format=${format}`, { headers: session ? { Cookie: session.cookie } : {} });
   const book = XLSX.read(Buffer.from(await (await get('xlsx')).arrayBuffer()), { type: 'buffer' });
-  assert.equal(book.SheetNames.length, 5); assert.equal(book.SheetNames[0], 'Overzicht'); assert.ok(book.SheetNames.includes('Nog te verdelen'));
+  assert.equal(book.SheetNames.length, 5); assert.equal(book.SheetNames[0], 'Overview'); assert.ok(book.SheetNames.includes('Unassigned'));
   const first = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[1]], { header: 1 }); assert.equal(first.length, 3); assert.equal(first[1][1], 'Pallet 1');
   const empty = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[3]], { header: 1 }); assert.equal(empty.length, 1);
-  const csv = await (await get('csv')).text(); assert.ok(csv.includes('Lamp 2')); assert.ok(csv.includes('Kabel 1')); assert.ok(csv.includes('Nog te verdelen')); assert.ok(csv.includes('Los object 1'));
+  const csv = await (await get('csv')).text(); assert.ok(csv.includes('Lamp 2')); assert.ok(csv.includes('Kabel 1')); assert.ok(csv.includes('Unassigned')); assert.ok(csv.includes('Los object 1'));
   const label = await (await get('label')).text(); assert.equal((label.match(/class="label"/g) || []).length, 3); assert.ok(label.includes('break-after:page')); assert.ok(label.includes('Pallet 3')); assert.ok(!label.includes('Los object'));
-  const print = await (await get('print')).text(); assert.equal((print.match(/class="packing-list"/g) || []).length, 4); assert.ok(print.includes('Pallet 3')); assert.ok(print.includes('Nog te verdelen')); assert.ok(print.includes('break-before:page'));
+  const print = await (await get('print')).text(); assert.equal((print.match(/class="packing-list"/g) || []).length, 4); assert.ok(print.includes('Pallet 3')); assert.ok(print.includes('Unassigned')); assert.ok(print.includes('break-before:page'));
   const stranger = await createMember('bulk-export-stranger@example.test'); assert.equal((await get('xlsx', stranger.session)).status, 404); assert.equal((await get('label', null)).status, 401);
   const emptyShipment = (await request('/shipments', 'POST', { name: 'Lege export' })).data;
   const response = await fetch(`http://127.0.0.1:${port}/api/shipments/${emptyShipment.id}/export?format=label`, { headers: { Cookie: adminSession.cookie } }); assert.equal(response.status, 400);
 });
 
-test('Pallettracking migreert leeg en blijft onafhankelijk van objecttracking', async () => {
+test('Pallet tracking starts empty after migration and remains independent of item tracking', async () => {
   assert.deepEqual((await request('/shipments/legacy')).data.pallets[0].statuses, {});
   const shipment = (await request('/shipments', 'POST', { name: 'Camionlading' })).data;
   const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
@@ -467,7 +467,7 @@ test('Pallettracking migreert leeg en blijft onafhankelijk van objecttracking', 
   assert.ok((await request(`/shipments/${shipment.id}`)).data.pallets[0].statuses.inWarehouse);
 });
 
-test('Palletstatus vereist shipmenttoegang, geldige status en boolean', async () => {
+test('Pallet status requires shipment access, valid stages and boolean values', async () => {
   const pallet = (await request('/shipments/legacy')).data.pallets[0];
   for (const body of [{ status: 'invalid', checked: true }, { status: 'outWarehouse', checked: 'true' }, {}]) {
     assert.equal((await request(`/pallets/${pallet.id}`, 'PATCH', body)).status, 400);
@@ -481,7 +481,7 @@ test('Palletstatus vereist shipmenttoegang, geldige status en boolean', async ()
   assert.deepEqual((await request('/shipments/legacy')).data.pallets[0].statuses, {});
 });
 
-test('Shipment archiveren en herstellen bewaart inhoud en is alleen voor beheerders en maker', async () => {
+test('Archiving and restoring preserve content and require management permissions', async () => {
   const member = await createMember('archive-member@example.test');
   const shipment = (await request('/shipments', 'POST', { name: 'Archieftest' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
@@ -499,7 +499,7 @@ test('Shipment archiveren en herstellen bewaart inhoud en is alleen voor beheerd
   assert.equal((await request(`/shipments/${owned.id}`, 'PATCH', { archived: true }, member.session)).status, 200);
 });
 
-test('Shipment verwijderen vereist bevestiging en ruimt alle inhoud en fotobestanden op', async () => {
+test('Shipment deletion requires confirmation and removes content and photo files', async () => {
   const member = await createMember('delete-shipment@example.test');
   const shipment = (await request('/shipments', 'POST', { name: 'Verwijdertest' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
@@ -525,7 +525,7 @@ test('Shipment verwijderen vereist bevestiging en ruimt alle inhoud en fotobesta
   check.close();
 });
 
-test('Archivering comprimeert alle palletfoto’s, behoudt tracking en recomprimeert niet bij herstel', async () => {
+test('Archiving compresses photos, preserves tracking and does not recompress restored photos', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Fotocompressie' })).data;
   const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
   const pixels = randomBytes(2200 * 1400 * 3);
@@ -554,7 +554,7 @@ test('Archivering comprimeert alle palletfoto’s, behoudt tracking en recomprim
   assert.deepEqual((await request(`/shipments/${shipment.id}`)).data.pallets, after.pallets);
 });
 
-test('Onleesbare archieffoto voorkomt archivering en bewaart alle originelen', async () => {
+test('Unreadable photos prevent archiving and preserve originals', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Beschadigde foto' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
   const valid = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: '#abcdef' } }).png().toBuffer();
@@ -568,7 +568,7 @@ test('Onleesbare archieffoto voorkomt archivering en bewaart alle originelen', a
   for (const photo of before.pallets[0].photos) assert.ok(existsSync(path.join(dir, 'uploads', path.basename(photo.url))));
 });
 
-test('Palletkolommen zijn onafhankelijk per gebruiker en shipment en behouden tracking', async () => {
+test('Pallet columns are independent per user and shipment and preserve tracking', async () => {
   const member = await createMember('pallet-columns@example.test');
   const shipment = (await request('/shipments', 'POST', { name: 'Kolommen pallet' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
@@ -589,7 +589,7 @@ test('Palletkolommen zijn onafhankelijk per gebruiker en shipment en behouden tr
   assert.deepEqual((await request(`/shipments/${shipment.id}`)).data.palletColumns, columns);
 });
 
-test('Palletten hernoemen en verwijderen bewaart objecten en tracking en ruimt foto’s op', async () => {
+test('Renaming and deleting pallets preserve items and tracking and remove photo files', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Palletbeheer' })).data;
   const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
   await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Kist', palletId: pallets[0].id }] });
@@ -614,7 +614,7 @@ test('Palletten hernoemen en verwijderen bewaart objecten en tracking en ruimt f
   await stop(); await start(); assert.equal((await request(`/shipments/${shipment.id}`)).data.items[0].palletId, null);
 });
 
-test('Shipmentnaam en locatie wijzigen bewaart archief en inhoud en vereist beheerrechten', async () => {
+test('Shipment name and location edits preserve archive state and content and require management access', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Oude naam', destination: 'Gent' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
   await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Kist', palletId: pallet.id }] });
@@ -632,7 +632,7 @@ test('Shipmentnaam en locatie wijzigen bewaart archief en inhoud en vereist behe
   await stop(); await start(); assert.equal((await request('/shipments')).data.find(s => s.id === shipment.id).name, 'Nieuwe naam');
 });
 
-test('Verouderde wijzigingen en verwijderingen worden geweigerd zonder nieuwe gegevens te overschrijven', async () => {
+test('Stale edits and deletions are rejected without overwriting newer data', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Samenwerken' })).data;
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
   await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Lamp', palletId: pallet.id }] });
@@ -652,7 +652,7 @@ test('Verouderde wijzigingen en verwijderingen worden geweigerd zonder nieuwe ge
   assert.equal(current.items[0].name, 'Nieuwe lamp'); assert.equal(current.items[0].note, ''); assert.equal(current.pallets[0].name, 'Nieuwe pallet');
 });
 
-test('Shipmentroutes bewaren heen en terug met geldige datums en tonen ze op alle labels', async () => {
+test('Shipment routes preserve outbound and return dates and appear on every label', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Route', destination: 'Antwerpen', outboundDate: '2026-10-08', returnDestination: 'Gent', returnDate: '2026-10-12' })).data;
   assert.equal(shipment.outboundDate, '2026-10-08'); assert.equal(shipment.returnDestination, 'Gent');
   await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 });
@@ -666,7 +666,7 @@ test('Shipmentroutes bewaren heen en terug met geldige datums en tonen ze op all
   assert.equal(persisted.returnDestination, 'Brussel'); assert.equal(persisted.outboundDate, '2026-10-08');
 });
 
-test('Logobibliotheek bewaart uploads en hergebruikt logo’s met beheercontrole', async () => {
+test('The logo library saves uploads and reuses logos with management permissions', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Bibliotheek' })).data;
   const form = new FormData(); form.append('file', new Blob([pngSample], { type: 'image/png' }), 'Bedrijfslogo.png');
   assert.equal((await request(`/shipments/${shipment.id}/logo`, 'POST', form)).status, 200);
@@ -686,7 +686,7 @@ test('Logobibliotheek bewaart uploads en hergebruikt logo’s met beheercontrole
   await stop(); await start(); assert.equal((await request('/logos')).data.length, before);
 });
 
-test('Logobibliotheek controleert shipmentrechten bij lijst, afbeelding en kiezen', async () => {
+test('The logo library checks shipment access for listing, images and selection', async () => {
   const owner = await createMember('logo-owner@example.test');
   const viewer = await createMember('logo-viewer@example.test');
   const shipment = (await request('/shipments', 'POST', { name: 'Privé logo' }, owner.session)).data;
@@ -708,7 +708,7 @@ test('Logobibliotheek controleert shipmentrechten bij lijst, afbeelding en kieze
   assert.equal((await request('/logos', 'GET', undefined, owner.session)).data.some(l => l.id === logo.id), false);
 });
 
-test('Palletlabels bevatten unieke QR-links zonder toegangstoken en blijven loginbeveiligd', async () => {
+test('Pallet labels contain distinct QR links without access tokens and require login', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'QR shipment' })).data;
   const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
   const endpoint = `http://127.0.0.1:${port}/api/shipments/${shipment.id}/export?format=label`;
@@ -722,7 +722,7 @@ test('Palletlabels bevatten unieke QR-links zonder toegangstoken en blijven logi
   assert.equal((await request(`/shipments/${shipment.id}`, 'GET', undefined, member.session)).status, 404);
 });
 
-test('Palletprefix en postfix krijgen doorlopende bulknummering zonder dubbele namen', async () => {
+test('Pallet prefixes and postfixes receive consecutive bulk numbers without duplicate names', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Naamformaten' })).data;
   const add = body => request(`/shipments/${shipment.id}/pallets`, 'POST', body);
   assert.deepEqual((await add({ quantity: 2, prefix: 'Stage', postfix: 'Antwerpen' })).data.pallets.map(p => p.name), ['Stage 1 Antwerpen', 'Stage 2 Antwerpen']);
