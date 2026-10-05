@@ -717,7 +717,7 @@ test('Palletlabels bevatten unieke QR-links zonder toegangstoken en blijven logi
   const html = await response.text();
   assert.equal((html.match(/class="pallet-qr"/g) || []).length, 2);
   for (const pallet of pallets) assert.ok(html.includes(`shipment=${shipment.id}&amp;pallet=${pallet.id}`));
-  assert.ok(html.includes('data:image/png;base64,')); assert.ok(html.includes('Login vereist')); assert.ok(!html.includes(adminSession.csrfToken));
+  assert.ok(html.includes('data:image/png;base64,')); assert.ok(!html.includes('Login vereist')); assert.ok(!html.includes('Scan voor palletinhoud')); assert.ok(html.includes('width:20mm;height:20mm')); assert.ok(!html.includes(adminSession.csrfToken));
   const member = await createMember('qr-no-access@example.test');
   assert.equal((await request(`/shipments/${shipment.id}`, 'GET', undefined, member.session)).status, 404);
 });
