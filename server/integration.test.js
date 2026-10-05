@@ -707,3 +707,17 @@ test('Logobibliotheek controleert shipmentrechten bij lijst, afbeelding en kieze
   await request(`/shipments/${shipment.id}`, 'DELETE', { confirmName: shipment.name }, owner.session);
   assert.equal((await request('/logos', 'GET', undefined, owner.session)).data.some(l => l.id === logo.id), false);
 });
+
+test('Palletlabels bevatten unieke QR-links zonder toegangstoken en blijven loginbeveiligd', async () => {
+  const shipment = (await request('/shipments', 'POST', { name: 'QR shipment' })).data;
+  const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
+  const endpoint = `http://127.0.0.1:${port}/api/shipments/${shipment.id}/export?format=label`;
+  assert.equal((await fetch(endpoint)).status, 401);
+  const response = await fetch(endpoint, { headers: { Cookie: adminSession.cookie } });
+  const html = await response.text();
+  assert.equal((html.match(/class="pallet-qr"/g) || []).length, 2);
+  for (const pallet of pallets) assert.ok(html.includes(`shipment=${shipment.id}&amp;pallet=${pallet.id}`));
+  assert.ok(html.includes('data:image/png;base64,')); assert.ok(html.includes('Login vereist')); assert.ok(!html.includes(adminSession.csrfToken));
+  const member = await createMember('qr-no-access@example.test');
+  assert.equal((await request(`/shipments/${shipment.id}`, 'GET', undefined, member.session)).status, 404);
+});

@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { createHash, randomUUID } from 'node:crypto';
 import { formatDate } from '../shared/dates.js';
 import multer from 'multer';
@@ -65,7 +66,7 @@ export function installExports(app, db, auth) {
   });
   app.delete('/api/shipments/:id/logo', (req, res) => { auth.requireShipment(req.user, req.params.id, true); db.prepare('DELETE FROM shipment_logos WHERE shipmentId=?').run(req.params.id); res.json({ ok: true }); });
 
-  app.get(['/api/pallets/:id/export', '/api/shipments/:id/export'], (req, res) => {
+  app.get(['/api/pallets/:id/export', '/api/shipments/:id/export'], async (req, res) => {
     const bulk = req.path.startsWith('/api/shipments/');
     const pallet = bulk ? null : db.prepare('SELECT * FROM pallets WHERE id=?').get(req.params.id);
     if (!bulk && !pallet) throw fail('Pallet niet gevonden.', 404);
@@ -81,10 +82,15 @@ export function installExports(app, db, auth) {
     const brand = db.prepare('SELECT * FROM shipment_logos WHERE shipmentId=?').get(shipment.id);
     const logo = brand ? `<img class="logo" alt="Shipmentlogo" src="data:${brand.mimeType};base64,${Buffer.from(brand.content).toString('base64')}">` : `<div class="brand">${mark}</div>`;
     if (format === 'label') {
-      const css = `@page{size:105mm 148mm;margin:0}.label{width:105mm;height:148mm;margin:20px auto;padding:9mm;background:white;display:flex;flex-direction:column;overflow:hidden}.label .branding{height:27mm;display:flex;align-items:center}.label .caption{font-size:9pt;text-transform:uppercase;letter-spacing:1.5px;color:#667660;margin-bottom:4mm}.label .shipment{font-size:${shipment.name.length > 80 ? 10 : 21}pt;font-weight:bold;overflow-wrap:anywhere;line-height:1.2;margin:0 0 8mm}.label .pallet{font-size:40pt;font-weight:bold;overflow-wrap:anywhere;line-height:1.15}.label-route{margin-top:5mm;display:grid;grid-template-columns:1fr 1fr;gap:4mm;font-size:9pt;line-height:1.3}.label-route strong,.label-route span{display:block;overflow-wrap:anywhere}.label-route strong{margin-bottom:2mm}.label .bottom{margin-top:auto;border-top:1px solid #acb9a4;padding-top:4mm;font-size:10pt}@media print{.label{margin:0;break-after:page}.label:last-child{break-after:auto}}@media screen and (max-width:450px){.label{max-width:100%;height:auto;min-height:148mm}.print-tools{flex-wrap:wrap}}`;
+      const css = `@page{size:105mm 148mm;margin:0}.label{width:105mm;height:148mm;margin:20px auto;padding:9mm;background:white;display:flex;flex-direction:column;overflow:hidden}.label .branding{height:22mm;flex-shrink:0;display:flex;align-items:center}.label .caption{font-size:9pt;text-transform:uppercase;letter-spacing:1.5px;color:#667660;margin-bottom:4mm}.label .shipment{font-size:${shipment.name.length > 80 ? 10 : 21}pt;font-weight:bold;overflow-wrap:anywhere;line-height:1.2;margin:0 0 5mm}.label .pallet{font-size:40pt;font-weight:bold;overflow-wrap:anywhere;line-height:1.15}.label-route{margin-top:5mm;display:grid;grid-template-columns:1fr 1fr;gap:4mm;font-size:9pt;line-height:1.3}.label-route strong,.label-route span{display:block;overflow-wrap:anywhere}.label-route strong{margin-bottom:2mm}.label .bottom{display:flex;align-items:center;justify-content:space-between;gap:3mm;margin-top:auto;border-top:1px solid #acb9a4;padding-top:4mm;font-size:10pt}.pallet-qr{width:24mm;height:24mm;display:block}.label .bottom span{font-size:8pt;line-height:1.5}@media print{.label{margin:0;break-after:page}.label:last-child{break-after:auto}}@media screen and (max-width:450px){.label{max-width:100%;height:auto;min-height:148mm}.print-tools{flex-wrap:wrap}}`;
       if (!pallets.length) throw fail('Maak minstens één pallet om labels te exporteren.');
       const route = `<div class="label-route"><div><strong>Outbound</strong><span>${escapeHtml(shipment.destination || 'Niet opgegeven')}</span>${shipment.outboundDate ? `<span>${escapeHtml(formatDate(shipment.outboundDate))}</span>` : ''}</div><div><strong>Return</strong><span>${escapeHtml(shipment.returnDestination || 'Niet opgegeven')}</span>${shipment.returnDate ? `<span>${escapeHtml(formatDate(shipment.returnDate))}</span>` : ''}</div></div>`;
-      const labels = groups.filter(group => group.id).map(group => `<article class="label"><div class="branding">${logo}</div><p class="caption">Shipment</p><h1 class="shipment">${escapeHtml(shipment.name)}</h1><p class="caption">Pallet</p><h2 class="pallet" style="font-size:${group.name.length > 80 ? 10 : group.name.length > 35 ? 18 : 40}pt">${escapeHtml(group.name)}</h2>${route}<p class="bottom">${group.items.length} objecten</p></article>`).join('');
+      const labels = (await Promise.all(groups.filter(group => group.id).map(async group => {
+        const url = new URL('/', process.env.APP_URL || `${req.protocol}://${req.get('host')}`);
+        url.searchParams.set('shipment', shipment.id); url.searchParams.set('pallet', group.id);
+        const qr = await QRCode.toDataURL(url.href, { errorCorrectionLevel: 'M', margin: 4, width: 300 });
+        return `<article class="label"><div class="branding">${logo}</div><p class="caption">Shipment</p><h1 class="shipment">${escapeHtml(shipment.name)}</h1><p class="caption">Pallet</p><h2 class="pallet" style="font-size:${group.name.length > 80 ? 10 : group.name.length > 35 ? 18 : 40}pt">${escapeHtml(group.name)}</h2>${route}<div class="bottom"><span>${group.items.length} objecten<br/>Scan voor palletinhoud<br/>Login vereist</span><a href="${escapeHtml(url.href)}"><img class="pallet-qr" src="${qr}" alt="QR-code voor ${escapeHtml(group.name)}"/></a></div></article>`;
+      }))).join('');
       res.type('html').send(documentHtml(heading, css, `<div class="print-tools"><button onclick="window.print()">Labels afdrukken / bewaren als PDF</button><span>${pallets.length} labels · A6 · 105 × 148 mm · schaal 100% · zonder kop- en voetteksten</span></div>${labels}`));
       return;
     }

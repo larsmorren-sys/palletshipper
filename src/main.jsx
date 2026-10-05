@@ -60,15 +60,18 @@ function App({ user, logout, refresh }) {
       setShipments(rows);
       let remembered;
       try { remembered = localStorage.getItem(shipmentStorageKey); } catch {}
-      const first = rows.find(s => s.id === remembered) || rows.find(s => !s.archivedAt) || rows[0];
-      if (first) { setShowArchived(!!first.archivedAt); setSelected(first.id); }
+      const requested = new URLSearchParams(window.location.search);
+      const requestedShipment = requested.get('shipment');
+      if (requestedShipment && !rows.some(s => s.id === requestedShipment)) { setError('Shipment niet gevonden of geen toegang.'); return; }
+      const first = rows.find(s => s.id === requestedShipment) || rows.find(s => s.id === remembered) || rows.find(s => !s.archivedAt) || rows[0];
+      if (first) { setShowArchived(!!first.archivedAt); setSelected(first.id); if (requestedShipment && requested.get('pallet')) setPallet(requested.get('pallet')); }
     }).catch(e => setError(e.message)).finally(() => setLoading(false));
   }, []);
   useEffect(() => {
     if (!selected) return;
     try { localStorage.setItem(shipmentStorageKey, selected); } catch {}
   }, [selected, shipmentStorageKey]);
-  useEffect(() => { if (!selected) return; let ignore = false; setLoading(true); setData({ pallets: [], items: [] }); api(`/api/shipments/${selected}`).then(result => { if (!ignore) setData(result); }).catch(e => { if (!ignore) setError(e.message); }).finally(() => { if (!ignore) setLoading(false); }); return () => { ignore = true; }; }, [selected]);
+  useEffect(() => { if (!selected) return; let ignore = false; setLoading(true); setData({ pallets: [], items: [] }); api(`/api/shipments/${selected}`).then(result => { if (!ignore) { setData(result); const requested = new URLSearchParams(window.location.search); if (requested.get('shipment') === selected && requested.get('pallet') && !result.pallets.some(p => p.id === requested.get('pallet'))) { setError('Deze pallet bestaat niet meer.'); setPallet('unassigned'); } } }).catch(e => { if (!ignore) setError(e.message); }).finally(() => { if (!ignore) setLoading(false); }); return () => { ignore = true; }; }, [selected]);
   useEffect(() => {
     if (busy || modal || loading) return;
     let cancelled = false, inFlight = false;
@@ -91,7 +94,7 @@ function App({ user, logout, refresh }) {
     document.addEventListener('visibilitychange', synchronize);
     return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', synchronize); document.removeEventListener('visibilitychange', synchronize); };
   }, [selected, busy, modal, loading]);
-  function changeShipment(id) { setSelected(id); setPallet('all'); setSearch(''); }
+  function changeShipment(id) { const url = new URL(window.location.href); url.searchParams.delete('shipment'); url.searchParams.delete('pallet'); window.history.replaceState(null, '', url); setSelected(id); setPallet('all'); setSearch(''); }
   function toggleArchiveView(archived) {
     setShowArchived(archived); changeShipment(shipments.find(s => !!s.archivedAt === archived)?.id || '');
   }
