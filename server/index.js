@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'csv-parse/sync';
 import XLSX from 'xlsx';
 import { extractPdfRows } from './pdf-import.js';
-import { nextPalletNumber, objectNameKey } from '../shared/numbering.js';
+import { nextPalletNumber, palletName, objectNameKey } from '../shared/numbering.js';
 import { installAuth } from './auth.js';
 import { archiveShipment } from './archive-photos.js';
 import { installExports } from './exports.js';
@@ -152,6 +152,9 @@ app.get('/api/shipments/:id', (req, res) => {
 app.post('/api/shipments/:id/pallets', (req, res) => {
   requireShipment(req.user, req.params.id);
   const name = clean(req.body.name);
+  const prefix = req.body.prefix === undefined ? 'Pallet' : req.body.prefix;
+  const postfix = req.body.postfix === undefined ? '' : req.body.postfix;
+  if (typeof prefix !== 'string' || typeof postfix !== 'string' || prefix.trim().length > 90 || postfix.trim().length > 90) throw fail('Gebruik maximaal 90 tekens voor prefix en postfix.');
   const quantity = Number(req.body.quantity ?? 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw fail('Kies een geheel aantal tussen 1 en 200 palletten.');
   if (name && quantity > 1) throw fail('Meerdere palletten krijgen automatisch een naam. Laat de naam leeg.');
@@ -160,10 +163,11 @@ app.post('/api/shipments/:id/pallets', (req, res) => {
   try {
     const existing = db.prepare('SELECT name FROM pallets WHERE shipmentId=?').all(req.params.id);
     if (name && existing.some(pallet => objectNameKey(pallet.name) === objectNameKey(name))) throw fail('Er bestaat al een pallet met deze naam.');
-    const start = nextPalletNumber(existing);
+    const start = nextPalletNumber(existing, prefix, postfix);
     const insert = db.prepare('INSERT INTO pallets (id, shipmentId, name, photo) VALUES (?, ?, ?, NULL)');
     for (let i = 0; i < quantity; i++) {
-      const pallet = { id: randomUUID(), name: name || `Pallet ${start + i}`, shipmentId: req.params.id, photo: null, photos: [], statuses: {} };
+      const pallet = { id: randomUUID(), name: name || palletName(start + i, prefix, postfix), shipmentId: req.params.id, photo: null, photos: [], statuses: {} };
+      if (existing.some(p => objectNameKey(p.name) === objectNameKey(pallet.name))) throw fail('Er bestaat al een pallet met deze naam.');
       insert.run(pallet.id, pallet.shipmentId, pallet.name); pallets.push(pallet);
     }
     db.exec('COMMIT');

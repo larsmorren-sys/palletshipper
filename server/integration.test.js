@@ -721,3 +721,17 @@ test('Palletlabels bevatten unieke QR-links zonder toegangstoken en blijven logi
   const member = await createMember('qr-no-access@example.test');
   assert.equal((await request(`/shipments/${shipment.id}`, 'GET', undefined, member.session)).status, 404);
 });
+
+test('Palletprefix en postfix krijgen doorlopende bulknummering zonder dubbele namen', async () => {
+  const shipment = (await request('/shipments', 'POST', { name: 'Naamformaten' })).data;
+  const add = body => request(`/shipments/${shipment.id}/pallets`, 'POST', body);
+  assert.deepEqual((await add({ quantity: 2, prefix: 'Stage', postfix: 'Antwerpen' })).data.pallets.map(p => p.name), ['Stage 1 Antwerpen', 'Stage 2 Antwerpen']);
+  assert.equal((await add({ prefix: 'Stage', postfix: 'Antwerpen' })).data.pallets[0].name, 'Stage 3 Antwerpen');
+  assert.equal((await add({ prefix: 'Stage', postfix: 'Gent' })).data.pallets[0].name, 'Stage 1 Gent');
+  assert.equal((await add({ prefix: '', postfix: '' })).data.pallets[0].name, '1');
+  assert.equal((await add({ prefix: '', postfix: '' })).data.pallets[0].name, '2');
+  assert.equal((await add({ prefix: 'A+', postfix: '(B)' })).data.pallets[0].name, 'A+ 1 (B)');
+  assert.equal((await add({ prefix: 'A+', postfix: '(B)' })).data.pallets[0].name, 'A+ 2 (B)');
+  assert.equal((await add({ prefix: 'x'.repeat(91) })).status, 400);
+  assert.equal((await add({ prefix: 123 })).status, 400);
+});
