@@ -196,11 +196,12 @@ test('Existing items receive stable numbers without losing tracking or assignmen
   assert.deepEqual(pallets.pallets.map(p => p.name), ['Pallet 5', 'Pallet 6']);
 });
 
-async function createMember(email, name = 'User', role = 'member') {
+async function createMember(email, name = 'User', role = 'member', participates = false) {
   const result = await request('/users', 'POST', { name, email, role, password: 'member-password-123' });
   assert.equal(result.status, 201); assert.equal('passwordHash' in result.data, false);
   const session = { cookie: '', csrfToken: '' };
   assert.equal((await request('/auth/login', 'POST', { email, password: 'member-password-123' }, session)).status, 200);
+  if (participates) await request('/auth/profile', 'PATCH', { nickname: '', challengeParticipating: true }, session);
   return { user: result.data, session };
 }
 test('Login and CSRF are required and users cannot promote themselves', async () => {
@@ -761,7 +762,7 @@ test('Transport routes validate manual distances, revisions, defaults and shipme
 });
 
 test('Pallet challenges attribute checks once, share tied leg distances and recalculate corrections', async () => {
-  const a = await createMember('challenge-a@example.test'), b = await createMember('challenge-b@example.test'), outsider = await createMember('challenge-outsider@example.test');
+  const a = await createMember('challenge-a@example.test', 'User', 'member', true), b = await createMember('challenge-b@example.test', 'User', 'member', true), outsider = await createMember('challenge-outsider@example.test');
   const shipment = (await request('/shipments', 'POST', { name: 'Private challenge' }, a.session)).data;
   await request(`/shipments/${shipment.id}/access`, 'PUT', { userIds:[b.user.id] }, a.session);
   await request(`/shipments/${shipment.id}/route`, 'PUT', { warehouseAddress:'Antwerp, Belgium',outboundAddress:'Brussels, Belgium',outboundKm:100,returnKm:120 }, a.session);
@@ -794,7 +795,7 @@ test('Pallet challenges attribute checks once, share tied leg distances and reca
 });
 
 test('Legacy pallet checks have no attribution and challenge periods use the Belgian calendar', async () => {
-  const member=await createMember('challenge-calendar@example.test');
+  const member=await createMember('challenge-calendar@example.test', 'User', 'member', true);
   const shipment=(await request('/shipments','POST',{name:'Calendar challenge'},member.session)).data;
   const pallet=(await request(`/shipments/${shipment.id}/pallets`,'POST',{},member.session)).data;
   const database=new DatabaseSync(path.join(dir,'shipments.sqlite'));
@@ -825,4 +826,34 @@ test('Automatic challenge distances cross oceans without road API calls and migr
   const migrated=rows.find(s=>s.id===shipment.id),unchanged=rows.find(s=>s.id===manual.id);
   assert.equal(migrated.distanceSource,'straight-line');assert.equal(migrated.outboundKm,saved.data.outboundKm);assert.equal(migrated.returnKm,saved.data.returnKm);
   assert.equal(unchanged.distanceSource,'manual');assert.equal(unchanged.outboundKm,9000);assert.equal(unchanged.returnKm,9200);
+});
+
+
+test('Own profile supports nickname and optional challenge participation without changing passwords, permissions or tracking', async () => {
+  const a=await createMember('nickname-a@example.test','Real Account Name'),b=await createMember('nickname-b@example.test','Second User');
+  const current=(await request('/auth/session','GET',undefined,a.session)).data.user;
+  assert.equal(current.nickname,'');assert.equal(current.challengeParticipating,false);
+  const dbBefore=new DatabaseSync(path.join(dir,'shipments.sqlite'));const hashBefore=dbBefore.prepare('SELECT passwordHash FROM users WHERE id=?').get(a.user.id).passwordHash;dbBefore.close();
+  assert.equal((await request('/auth/profile','PATCH',{nickname:'Captain Pallet',challengeParticipating:true},null)).status,401);
+  assert.equal((await request('/auth/profile','PATCH',{nickname:'Captain Pallet',challengeParticipating:true},a.session,{'X-CSRF-Token':'wrong'})).status,403);
+  assert.equal((await request('/auth/profile','PATCH',{nickname:'x'.repeat(41),challengeParticipating:true},a.session)).status,400);
+  assert.equal((await request('/auth/profile','PATCH',{nickname:'Captain',challengeParticipating:'yes'},a.session)).status,400);
+  assert.equal((await request('/auth/profile','PATCH',{nickname:'Captain',challengeParticipating:true,role:'admin'},a.session)).status,400);
+  let updated=await request('/auth/profile','PATCH',{nickname:' Captain Pallet ',challengeParticipating:true},a.session);
+  assert.equal(updated.status,200);assert.equal(updated.data.user.nickname,'Captain Pallet');assert.equal(updated.data.user.name,'Real Account Name');assert.equal(updated.data.user.role,'member');assert.ok(!('passwordHash' in updated.data.user));
+  const shipment=(await request('/shipments','POST',{name:'Nickname challenge'},a.session)).data;
+  await request(`/shipments/${shipment.id}/access`,'PUT',{userIds:[b.user.id]},a.session);
+  await request(`/shipments/${shipment.id}/route`,'PUT',{warehouseAddress:'Vilvoorde, Belgium',outboundAddress:'Whistler, Canada',outboundKm:100,returnKm:100},a.session);
+  const pallet=(await request(`/shipments/${shipment.id}/pallets`,'POST',{},a.session)).data;
+  await request(`/pallets/${pallet.id}`,'PATCH',{status:'outWarehouse',checked:true},a.session);
+  await request(`/pallets/${pallet.id}`,'PATCH',{status:'inLocation',checked:true},b.session);
+  let board=(await request('/challenges','GET',undefined,a.session)).data;
+  assert.equal(board.participating,true);assert.equal(board.rows.find(r=>r.id===a.user.id).name,'Captain Pallet');assert.equal(board.rows.find(r=>r.id===a.user.id).palletKm,100);assert.ok(!board.rows.some(r=>r.id===b.user.id));assert.equal(board.transports[0].winners[0].name,'Captain Pallet');
+  await request('/auth/profile','PATCH',{nickname:'Captain Pallet',challengeParticipating:false},a.session);
+  board=(await request('/challenges','GET',undefined,a.session)).data;assert.equal(board.participating,false);assert.ok(!board.rows.some(r=>r.id===a.user.id));assert.deepEqual(board.transports[0].winners,[]);
+  assert.equal((await request(`/shipments/${shipment.id}`,'GET',undefined,a.session)).data.pallets[0].statuses.outWarehouse!==null,true);
+  await request('/auth/profile','PATCH',{nickname:'',challengeParticipating:true},a.session);
+  board=(await request('/challenges','GET',undefined,a.session)).data;assert.equal(board.rows.find(r=>r.id===a.user.id).name,'Real Account Name');assert.equal(board.rows.find(r=>r.id===a.user.id).palletKm,100);
+  await stop();await start();assert.equal((await request('/auth/session','GET',undefined,a.session)).data.user.challengeParticipating,true);
+  const dbAfter=new DatabaseSync(path.join(dir,'shipments.sqlite'));assert.equal(dbAfter.prepare('SELECT passwordHash FROM users WHERE id=?').get(a.user.id).passwordHash,hashBefore);dbAfter.close();
 });

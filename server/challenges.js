@@ -69,10 +69,10 @@ export function installChallenges(app, db, auth) {
     const allowed = new Set(shipments.map(s => s.id));
     const detailAllowed = new Set(visibleShipments(req.user).map(s => s.id));
     const checks = db.prepare('SELECT c.*,p.shipmentId FROM pallet_checks c JOIN pallets p ON p.id=c.palletId WHERE c.active=1').all().filter(c => allowed.has(c.shipmentId));
-    const users = db.prepare('SELECT id,name FROM users').all();
+    const users = db.prepare("SELECT id,CASE WHEN nickname<>'' THEN nickname ELSE name END AS name FROM users WHERE challengeParticipating=1 AND active=1").all();
     const scores = new Map(users.map(u => [u.id, { ...u, checks: 0, pallets: 0, palletKm: 0, provisionalKm: 0 }]));
     const inPeriod = date => { const period = periodOf(date); return period.year === year && (!month || period.month === month); };
-    for (const check of checks) if (inPeriod(check.checkedAt)) { scores.get(check.userId).checks++; if (['inLocation', 'inWarehouse'].includes(check.stage)) scores.get(check.userId).pallets++; }
+    for (const check of checks) if (scores.has(check.userId) && inPeriod(check.checkedAt)) { scores.get(check.userId).checks++; if (['inLocation', 'inWarehouse'].includes(check.stage)) scores.get(check.userId).pallets++; }
     const byShipment = new Map();
     for (const check of checks) { if (!byShipment.has(check.shipmentId)) byShipment.set(check.shipmentId, []); byShipment.get(check.shipmentId).push(check); }
     const transports = [];
@@ -80,7 +80,7 @@ export function installChallenges(app, db, auth) {
       const palletCount = db.prepare('SELECT COUNT(*) AS n FROM pallets WHERE shipmentId=?').get(shipment.id).n;
       for (const [leg, stages, arrival, distance] of [['outbound', ['outWarehouse','inLocation'], 'inLocation', shipment.outboundKm], ['return', ['outLocation','inWarehouse'], 'inWarehouse', shipment.returnKm]]) {
         const legChecks = (byShipment.get(shipment.id) || []).filter(c => stages.includes(c.stage));
-        const votes = new Map(); for (const check of legChecks) votes.set(check.userId, (votes.get(check.userId) || 0) + 1);
+        const votes = new Map(); for (const check of legChecks) if (scores.has(check.userId)) votes.set(check.userId, (votes.get(check.userId) || 0) + 1);
         const top = Math.max(0, ...votes.values());
         const winners = [...votes].filter(([, count]) => count === top).map(([id]) => id);
         const arrivals = legChecks.filter(c => c.stage === arrival);
@@ -93,7 +93,7 @@ export function installChallenges(app, db, auth) {
     }
     const rows = [...scores.values()].filter(s => s.checks || s.palletKm || s.id === req.user.id).map(s => ({ ...s, badges: [s.pallets >= 1 && 'First Delivery', s.checks >= 100 && '100 Pallet Checks', s.palletKm >= 1000 && '1,000 Pallet Kilometres'].filter(Boolean) }));
     const years = [...new Set([currentPeriod.year, ...checks.map(c => periodOf(c.checkedAt).year)])].sort((a,b) => b-a);
-    res.json({ year, month, years, shared, rows, transports });
+    res.json({ year, month, years, shared, participating: scores.has(req.user.id), rows, transports });
   });
   return {
     defaultWarehouse: () => settings().warehouseAddress,

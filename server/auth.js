@@ -9,7 +9,7 @@ const derive = promisify(scrypt);
 const digest = value => createHash('sha256').update(String(value)).digest('hex');
 const same = (a, b) => timingSafeEqual(Buffer.from(digest(a), 'hex'), Buffer.from(digest(b), 'hex'));
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
-const safeUser = row => ({ id: row.id, name: row.name, email: row.email, role: row.role, active: !!row.active });
+const safeUser = row => ({ id: row.id, name: row.name, email: row.email, role: row.role, active: !!row.active, nickname: row.nickname || '', challengeParticipating: !!row.challengeParticipating });
 const normalizeEmail = value => String(value || '').trim().toLowerCase();
 const passwordOptions = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 };
 function validPassword(password) { if (typeof password !== 'string' || password.length < 12 || password.length > 256) throw fail('Use a password of 12 to 256 characters.'); }
@@ -37,6 +37,9 @@ export function installAuth(app, db, dataDir) {
     CREATE TABLE IF NOT EXISTS shipment_access (shipmentId TEXT NOT NULL REFERENCES shipments(id), userId TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(shipmentId, userId));
     CREATE TABLE IF NOT EXISTS column_preferences (shipmentId TEXT NOT NULL REFERENCES shipments(id), userId TEXT NOT NULL REFERENCES users(id), columns TEXT NOT NULL, PRIMARY KEY(shipmentId, userId));
     CREATE TABLE IF NOT EXISTS auth_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, resetAt INTEGER NOT NULL);`);
+  for (const [field, type] of [['nickname', "TEXT NOT NULL DEFAULT ''"], ['challengeParticipating', 'INTEGER NOT NULL DEFAULT 0']]) {
+    if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === field)) db.exec(`ALTER TABLE users ADD COLUMN ${field} ${type}`);
+  }
   if (!db.prepare('PRAGMA table_info(shipments)').all().some(c => c.name === 'ownerId')) db.exec('ALTER TABLE shipments ADD COLUMN ownerId TEXT REFERENCES users(id)');
   const setupPath = path.join(dataDir, 'setup-token.txt');
   const setupRequired = () => db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
@@ -98,7 +101,7 @@ export function installAuth(app, db, dataDir) {
     const passwordHash = await hashPassword(req.body.password);
     if (!setupRequired()) throw fail('The first administrator has already been created.', 409);
     const user = { id: randomUUID(), ...input, active: 1 };
-    db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, 1)').run(user.id, user.name, user.email, passwordHash, 'admin');
+    db.prepare('INSERT INTO users (id,name,email,passwordHash,role,active) VALUES (?, ?, ?, ?, ?, 1)').run(user.id, user.name, user.email, passwordHash, 'admin');
     db.prepare('DELETE FROM auth_attempts WHERE key=?').run(key);
     if (existsSync(setupPath)) unlinkSync(setupPath);
     res.status(201).json(issueSession(req, res, user));
@@ -126,6 +129,12 @@ export function installAuth(app, db, dataDir) {
     db.prepare('DELETE FROM sessions WHERE tokenHash=?').run(req.session.tokenHash);
     res.clearCookie(cookieName, { ...cookieOptions, maxAge: undefined }); res.json({ ok: true });
   });
+  app.patch('/api/auth/profile', (req, res) => {
+    const { nickname, challengeParticipating } = req.body;
+    if (Object.keys(req.body).some(key => !['nickname', 'challengeParticipating'].includes(key)) || typeof nickname !== 'string' || nickname.trim().length > 40 || /[\u0000-\u001f\u007f]/.test(nickname) || typeof challengeParticipating !== 'boolean') throw fail('Enter a nickname of up to 40 characters and a valid participation choice.');
+    db.prepare('UPDATE users SET nickname=?,challengeParticipating=? WHERE id=?').run(nickname.trim(), Number(challengeParticipating), req.user.id);
+    res.json({ user: safeUser(db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id)) });
+  });
   app.post('/api/auth/password', async (req, res) => {
     throttle(req, 'password');
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
@@ -144,7 +153,7 @@ export function installAuth(app, db, dataDir) {
     const passwordHash = await hashPassword(req.body.password);
     const user = { id: randomUUID(), ...input, active: 1 };
     admin({ user: db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(req.user.id) || { role: 'member' } });
-    try { db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, 1)').run(user.id, user.name, user.email, passwordHash, user.role); }
+    try { db.prepare('INSERT INTO users (id,name,email,passwordHash,role,active) VALUES (?, ?, ?, ?, ?, 1)').run(user.id, user.name, user.email, passwordHash, user.role); }
     catch { throw fail('This email address is already in use.'); }
     res.status(201).json(safeUser(user));
   });

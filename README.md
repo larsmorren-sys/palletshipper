@@ -56,7 +56,7 @@ If the key is rejected, check that you copied the full active Standard key from 
 
 The **star icon in the footer** opens Transport Challenge. It is available on computers and tablets and has a tooltip and accessible name.
 
-Open **Transport Challenge** using the star button in the page footer for leaderboards, badges and your progress. New pallet checks record the user automatically; no transport-responsible person needs to be assigned. Existing checks without a recorded user do not earn points. The scoring rules are explained below.
+Open **Transport Challenge** using the star button in the page footer for leaderboards, badges and your progress. Enable **Participate in the Transport Challenge** in your account settings to join. New pallet checks record the user automatically; no transport-responsible person needs to be assigned. Existing checks without a recorded user do not earn points. The scoring rules are explained below.
 
 By default, each user sees scores from shipments they can access. To run a common competition, an administrator can enable **Share user names and total scores across all shipments** in Challenge settings. Shipment details remain restricted by access permissions.
 
@@ -86,7 +86,9 @@ Open http://localhost:3001. The Node server serves both the interface and API. U
 
 Initial setup closes once an administrator exists. Administrators create accounts using **User management** and can change names, email addresses, roles, passwords and active status. Password resets, role changes and deactivation revoke existing sessions. At least one active administrator must remain. Accounts are deactivated rather than deleted.
 
-Click your name to change your own password. Other sessions are signed out. Email invitations, email recovery and two-factor authentication are not implemented.
+Click your account name to open **Account settings**. You can set an optional **Nickname**, enable or disable **Participate in the Transport Challenge**, or change your password in separate forms. Profile changes do not require a password change and do not affect your real account name, login or shipment permissions. The nickname is used in challenge rankings and reward winners; an empty nickname uses your account name. Nicknames need not be unique and are limited to 40 characters. Participation is off by default, including for existing accounts after the upgrade. Nonparticipating and inactive accounts are excluded from rankings and winning votes; normal tracking still works. Arrivals still count toward the transport distance pool. Recorded checks remain stored, so rejoining restores eligible scores and may change the current winners.
+
+Changing your password signs out your other sessions. Email invitations, email recovery and two-factor authentication are not implemented.
 
 Passwords are stored as salted scrypt hashes. Session tokens are hashed in the database; cookies use HttpOnly, SameSite=Strict and Secure in production. API changes require CSRF protection, and login attempts are limited. Shipment permissions are checked on the server, including for images and exports. These protections are not a substitute for an independent security audit or secure hosting and backups.
 
