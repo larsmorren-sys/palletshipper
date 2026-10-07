@@ -6,7 +6,7 @@ export function coordinates(value) {
   return value;
 }
 export async function providerRequest(endpoint, body) {
-  if (!routingConfigured()) throw fail('Automatic distances are not configured. Ask an administrator to set ORS_API_KEY, or enter distances manually.');
+  if (!routingConfigured()) throw fail('Address search is not configured. Ask an administrator to set ORS_API_KEY, or enter distances manually.');
   let response;
   try {
     response = await fetch(`https://api.heigit.org/${endpoint}`, { method: body ? 'POST' : 'GET', headers: { Accept: 'application/json', Authorization: process.env.ORS_API_KEY.trim(), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15000) });
@@ -36,22 +36,15 @@ export async function searchAddress(address) {
   const result = await providerRequest(`pelias/v1/search?${new URLSearchParams({ text: address.trim(), size: '5' })}`);
   return (result.features || []).map(feature => ({ address: feature.properties?.label, coordinates: coordinates(feature.geometry?.coordinates) })).filter(feature => feature.address && feature.coordinates);
 }
-export async function drivingDistances(db, warehouse, outbound, { refresh = false } = {}) {
+// Great-circle distance on a mean-radius Earth. Coordinates are [longitude, latitude].
+// This game estimate does not depend on roads, transport mode or an external API.
+export function straightLineDistances(warehouse, outbound) {
   coordinates(warehouse); coordinates(outbound);
   if (!warehouse || !outbound) throw fail('Find and select both addresses before calculating distances.');
-  const cacheKey = JSON.stringify([warehouse, outbound]);
-  const cached = db.prepare('SELECT * FROM route_cache WHERE key=? AND createdAt>?').get(cacheKey, Date.now() - 30 * 86400000);
-  if (cached && !refresh) return { outboundKm: cached.outboundKm, returnKm: cached.returnKm };
-  const distance = async (points, leg) => {
-    let result;
-    try { result = await providerRequest('openrouteservice/v2/directions/driving-car/json', { coordinates: points }); }
-    catch (error) { throw fail(`${leg}: ${error.message}`); }
-    const metres = result.routes?.[0]?.summary?.distance;
-    if (typeof metres !== 'number' || !Number.isFinite(metres) || metres < 0) throw fail('No driving route was found between these addresses.');
-    return Math.round(metres / 100) / 10;
-  };
-  const outboundKm = await distance([warehouse, outbound], 'Outbound route');
-  const returnKm = await distance([outbound, warehouse], 'Return route');
-  db.prepare('INSERT INTO route_cache VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET outboundKm=excluded.outboundKm,returnKm=excluded.returnKm,createdAt=excluded.createdAt').run(cacheKey, outboundKm, returnKm, Date.now());
-  return { outboundKm, returnKm };
+  const radians = degrees => degrees * Math.PI / 180;
+  const latitudeDelta = radians(outbound[1] - warehouse[1]);
+  const longitudeDelta = radians(outbound[0] - warehouse[0]);
+  const a = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(radians(warehouse[1])) * Math.cos(radians(outbound[1])) * Math.sin(longitudeDelta / 2) ** 2;
+  const km = Math.round(6371.0088 * 2 * Math.asin(Math.sqrt(Math.max(0, Math.min(1, a)))));
+  return { outboundKm: km, returnKm: km };
 }

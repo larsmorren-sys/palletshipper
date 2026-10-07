@@ -1,5 +1,5 @@
 import { revision, checkRevision } from './revisions.js';
-import { routingConfigured, searchAddress, drivingDistances, coordinates } from './routing.js';
+import { routingConfigured, searchAddress, straightLineDistances, coordinates } from './routing.js';
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const periodFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Brussels', year: 'numeric', month: '2-digit' });
 const periodOf = value => { const parts = periodFormatter.formatToParts(new Date(value)); return { year: Number(parts.find(p => p.type === 'year').value), month: Number(parts.find(p => p.type === 'month').value) }; };
@@ -9,8 +9,14 @@ export function installChallenges(app, db, auth) {
   }
   db.exec(`CREATE TABLE IF NOT EXISTS challenge_settings (id INTEGER PRIMARY KEY CHECK(id=1), shared INTEGER NOT NULL DEFAULT 0, warehouseAddress TEXT NOT NULL DEFAULT '');
     INSERT OR IGNORE INTO challenge_settings(id) VALUES(1);
-    CREATE TABLE IF NOT EXISTS route_cache(key TEXT PRIMARY KEY, outboundKm REAL NOT NULL, returnKm REAL NOT NULL, createdAt INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS pallet_checks(palletId TEXT NOT NULL REFERENCES pallets(id) ON DELETE CASCADE, stage TEXT NOT NULL, userId TEXT NOT NULL REFERENCES users(id), checkedAt TEXT NOT NULL, active INTEGER NOT NULL, PRIMARY KEY(palletId,stage));`);
+  // Upgrade previously automatic road distances; preserve all manual overrides.
+  for (const shipment of db.prepare("SELECT * FROM shipments WHERE distanceSource='openrouteservice'").all()) {
+    try {
+      const distances = straightLineDistances(JSON.parse(shipment.warehouseCoordinates), JSON.parse(shipment.outboundCoordinates));
+      db.prepare("UPDATE shipments SET outboundKm=?,returnKm=?,distanceSource='straight-line',distanceUpdatedAt=? WHERE id=?").run(distances.outboundKm, distances.returnKm, new Date().toISOString(), shipment.id);
+    } catch { /* Keep incomplete legacy routes available for manual correction. */ }
+  }
   const visibleShipments = user => user.role === 'admin' ? db.prepare('SELECT * FROM shipments').all() : db.prepare('SELECT * FROM shipments s WHERE s.ownerId=? OR EXISTS(SELECT 1 FROM shipment_access a WHERE a.shipmentId=s.id AND a.userId=?)').all(user.id, user.id);
   const settings = () => db.prepare('SELECT * FROM challenge_settings WHERE id=1').get();
   app.get('/api/challenges/settings', (req, res) => res.json({ ...settings(), shared: !!settings().shared, routingConfigured: routingConfigured() }));
@@ -34,8 +40,7 @@ export function installChallenges(app, db, auth) {
     if (req.user.role !== 'admin') throw fail('Only administrators can test the route connection.', 403);
     routeLimit(req);
     await searchAddress('Heidelberg, Germany');
-    await drivingDistances(db, [8.681495, 49.41461], [8.687872, 49.420318], { refresh: true });
-    res.json({ ok: true, message: 'API key accepted. Address search and driving distances are working.' });
+    res.json({ ok: true, message: 'API key accepted. Address search is working. Straight-line distances are calculated locally.' });
   });
   app.put('/api/shipments/:id/route', async (req, res) => {
     const initial = auth.requireShipment(req.user, req.params.id, true);
@@ -44,7 +49,7 @@ export function installChallenges(app, db, auth) {
     if ([warehouseAddress, outboundAddress].some(v => typeof v !== 'string' || !v.trim() || v.length > 500)) throw fail('Enter full warehouse and outbound addresses.');
     const warehouse = coordinates(req.body.warehouseCoordinates), outbound = coordinates(req.body.outboundCoordinates);
     let distances, source;
-    if (req.body.calculate === true) { routeLimit(req); distances = await drivingDistances(db, warehouse, outbound); source = 'openrouteservice'; }
+    if (req.body.calculate === true) { distances = straightLineDistances(warehouse, outbound); source = 'straight-line'; }
     else {
       const number = value => { if (value === '' || value === null || value === undefined) return null; if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 50000) throw fail('Enter distances between 0 and 50,000 km.'); return value; };
       distances = { outboundKm: number(req.body.outboundKm), returnKm: number(req.body.returnKm) }; source = 'manual';

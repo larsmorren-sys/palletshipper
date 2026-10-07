@@ -741,7 +741,7 @@ test('Transport routes validate manual distances, revisions, defaults and shipme
   const outsider = await createMember('route-outsider@example.test');
   assert.equal((await request('/challenges/settings', 'PUT', { warehouseAddress: 'Warehouse Street 1, Antwerp, Belgium', shared: false })).status, 200);
   assert.equal((await request('/challenges/settings', 'PUT', { shared: true }, member.session)).status, 403);
-  const shipment = (await request('/shipments', 'POST', { name: 'Physical route' }, member.session)).data;
+  const shipment = (await request('/shipments', 'POST', { name: 'Physical route', destination:'Event display name', returnDestination:'Warehouse display name' }, member.session)).data;
   assert.equal(shipment.warehouseAddress, 'Warehouse Street 1, Antwerp, Belgium');
   const body = { warehouseAddress: 'Warehouse Street 1, Antwerp, Belgium', outboundAddress: 'Event Street 2, Brussels, Belgium', outboundKm: 50.2, returnKm: 53.4, warehouseCoordinates: [4.4,51.2], outboundCoordinates: [4.35,50.85], revision: shipment.revision };
   assert.equal((await request(`/shipments/${shipment.id}/route`, 'PUT', body, outsider.session)).status, 404);
@@ -755,7 +755,9 @@ test('Transport routes validate manual distances, revisions, defaults and shipme
   assert.equal(response.status,400); // No pallets yet, rather than leaking an inaccessible route.
   await request(`/shipments/${shipment.id}/pallets`, 'POST', {quantity:1}, member.session);
   const label = await fetch(`http://127.0.0.1:${port}/api/shipments/${shipment.id}/export?format=label`, { headers: { Cookie: member.session.cookie } });
-  const html=await label.text();assert.ok(html.includes(body.warehouseAddress));assert.ok(html.includes(body.outboundAddress));
+  const html=await label.text();assert.ok(!html.includes(body.warehouseAddress));assert.ok(!html.includes(body.outboundAddress));assert.ok(html.includes('Event display name'));assert.ok(html.includes('Warehouse display name'));
+  const lists = await fetch(`http://127.0.0.1:${port}/api/shipments/${shipment.id}/export?format=print`, { headers: { Cookie: member.session.cookie } });
+  const listHtml=await lists.text();assert.ok(!listHtml.includes(body.warehouseAddress));assert.ok(!listHtml.includes(body.outboundAddress));
 });
 
 test('Pallet challenges attribute checks once, share tied leg distances and recalculate corrections', async () => {
@@ -804,4 +806,23 @@ test('Legacy pallet checks have no attribution and challenge periods use the Bel
   let result=await request('/challenges?year=2026&month=1','GET',undefined,member.session);assert.equal(result.data.rows.find(r=>r.id===member.user.id).checks,1);
   result=await request('/challenges?year=2025','GET',undefined,member.session);assert.equal(result.data.rows.find(r=>r.id===member.user.id).checks,0);
   assert.equal((await request('/challenges?month=13')).status,400);
+});
+
+test('Automatic challenge distances cross oceans without road API calls and migrate old road distances while preserving manual entries', async () => {
+  const member=await createMember('straight-line@example.test');
+  const shipment=(await request('/shipments','POST',{name:'Vilvoorde to Whistler'},member.session)).data;
+  const body={warehouseAddress:'Vilvoorde, Belgium',outboundAddress:'Whistler, BC, Canada',warehouseCoordinates:[4.43,50.93],outboundCoordinates:[-122.96,50.12],calculate:true,revision:shipment.revision};
+  assert.equal((await request(`/shipments/${shipment.id}/route`,'PUT',{...body,warehouseCoordinates:null},member.session)).status,400);
+  const saved=await request(`/shipments/${shipment.id}/route`,'PUT',body,member.session);
+  assert.equal(saved.status,200);assert.equal(saved.data.distanceSource,'straight-line');assert.equal(saved.data.outboundKm,saved.data.returnKm);assert.ok(Number.isInteger(saved.data.outboundKm));assert.ok(saved.data.outboundKm>7500);
+  assert.equal((await request(`/shipments/${shipment.id}/route`,'PUT',body,member.session)).status,409);
+  const manual=(await request('/shipments','POST',{name:'Manual retained'},member.session)).data;
+  await request(`/shipments/${manual.id}/route`,'PUT',{...body,calculate:false,outboundKm:9000,returnKm:9200,revision:manual.revision},member.session);
+  const database=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  database.prepare("UPDATE shipments SET distanceSource='openrouteservice',outboundKm=8000,returnKm=8200 WHERE id=?").run(shipment.id);database.close();
+  await stop();await start();
+  const rows=(await request('/shipments','GET',undefined,member.session)).data;
+  const migrated=rows.find(s=>s.id===shipment.id),unchanged=rows.find(s=>s.id===manual.id);
+  assert.equal(migrated.distanceSource,'straight-line');assert.equal(migrated.outboundKm,saved.data.outboundKm);assert.equal(migrated.returnKm,saved.data.returnKm);
+  assert.equal(unchanged.distanceSource,'manual');assert.equal(unchanged.outboundKm,9000);assert.equal(unchanged.returnKm,9200);
 });
