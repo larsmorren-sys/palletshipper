@@ -735,3 +735,73 @@ test('Pallet prefixes and postfixes receive consecutive bulk numbers without dup
   assert.equal((await add({ prefix: 'x'.repeat(91) })).status, 400);
   assert.equal((await add({ prefix: 123 })).status, 400);
 });
+
+test('Transport routes validate manual distances, revisions, defaults and shipment permissions', async () => {
+  const member = await createMember('route-member@example.test');
+  const outsider = await createMember('route-outsider@example.test');
+  assert.equal((await request('/challenges/settings', 'PUT', { warehouseAddress: 'Warehouse Street 1, Antwerp, Belgium', shared: false })).status, 200);
+  assert.equal((await request('/challenges/settings', 'PUT', { shared: true }, member.session)).status, 403);
+  const shipment = (await request('/shipments', 'POST', { name: 'Physical route' }, member.session)).data;
+  assert.equal(shipment.warehouseAddress, 'Warehouse Street 1, Antwerp, Belgium');
+  const body = { warehouseAddress: 'Warehouse Street 1, Antwerp, Belgium', outboundAddress: 'Event Street 2, Brussels, Belgium', outboundKm: 50.2, returnKm: 53.4, warehouseCoordinates: [4.4,51.2], outboundCoordinates: [4.35,50.85], revision: shipment.revision };
+  assert.equal((await request(`/shipments/${shipment.id}/route`, 'PUT', body, outsider.session)).status, 404);
+  assert.equal((await request(`/shipments/${shipment.id}/route`, 'PUT', { ...body, outboundKm: -1 }, member.session)).status, 400);
+  assert.equal((await request(`/shipments/${shipment.id}/route`, 'PUT', { ...body, warehouseCoordinates: [190,51] }, member.session)).status, 400);
+  const saved = await request(`/shipments/${shipment.id}/route`, 'PUT', body, member.session);
+  assert.equal(saved.status, 200); assert.equal(saved.data.outboundKm, 50.2); assert.equal(saved.data.distanceSource, 'manual');
+  assert.equal((await request(`/shipments/${shipment.id}/route`, 'PUT', body, member.session)).status, 409);
+  assert.equal((await request('/routing/check', 'POST', {}, member.session)).status, 403);
+  const response = await fetch(`http://127.0.0.1:${port}/api/shipments/${shipment.id}/export?format=label`, { headers: { Cookie: member.session.cookie } });
+  assert.equal(response.status,400); // No pallets yet, rather than leaking an inaccessible route.
+  await request(`/shipments/${shipment.id}/pallets`, 'POST', {quantity:1}, member.session);
+  const label = await fetch(`http://127.0.0.1:${port}/api/shipments/${shipment.id}/export?format=label`, { headers: { Cookie: member.session.cookie } });
+  const html=await label.text();assert.ok(html.includes(body.warehouseAddress));assert.ok(html.includes(body.outboundAddress));
+});
+
+test('Pallet challenges attribute checks once, share tied leg distances and recalculate corrections', async () => {
+  const a = await createMember('challenge-a@example.test'), b = await createMember('challenge-b@example.test'), outsider = await createMember('challenge-outsider@example.test');
+  const shipment = (await request('/shipments', 'POST', { name: 'Private challenge' }, a.session)).data;
+  await request(`/shipments/${shipment.id}/access`, 'PUT', { userIds:[b.user.id] }, a.session);
+  await request(`/shipments/${shipment.id}/route`, 'PUT', { warehouseAddress:'Antwerp, Belgium',outboundAddress:'Brussels, Belgium',outboundKm:100,returnKm:120 }, a.session);
+  const {pallets} = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {quantity:3}, a.session)).data;
+  const check = (pallet,stage,checked,session) => request(`/pallets/${pallet.id}`, 'PATCH', {status:stage,checked},session);
+  const board = async session => (await request('/challenges','GET',undefined,session)).data;
+  await check(pallets[0],'outWarehouse',true,a.session);await check(pallets[1],'outWarehouse',true,a.session);
+  await check(pallets[0],'inLocation',true,b.session);await check(pallets[1],'inLocation',true,b.session);
+  let scores=await board(a.session);const score=(data,id)=>data.rows.find(r=>r.id===id);
+  assert.equal(score(scores,a.user.id).checks,2);assert.equal(score(scores,b.user.id).checks,2);
+  assert.equal(score(scores,a.user.id).palletKm,100);assert.equal(score(scores,b.user.id).palletKm,100);
+  assert.equal(score(scores,a.user.id).provisionalKm,100);assert.equal(scores.transports[0].completed,false);
+  assert.equal((await board(outsider.session)).transports.length,0);assert.ok(!(await board(outsider.session)).rows.some(r=>r.id===a.user.id));
+  await check(pallets[0],'outWarehouse',true,b.session);scores=await board(a.session);assert.equal(score(scores,a.user.id).checks,2);assert.equal(score(scores,b.user.id).checks,2);
+  await check(pallets[0],'outWarehouse',false,b.session);scores=await board(a.session);assert.equal(score(scores,a.user.id).checks,1);assert.equal(score(scores,b.user.id).palletKm,200);
+  await check(pallets[0],'outWarehouse',true,b.session);scores=await board(a.session);assert.equal(score(scores,a.user.id).checks,2);assert.equal(score(scores,b.user.id).checks,2);
+  await check(pallets[2],'outWarehouse',true,a.session);await check(pallets[2],'inLocation',true,a.session);
+  scores=await board(a.session);assert.equal(score(scores,a.user.id).palletKm,300);assert.equal(score(scores,b.user.id).palletKm,0);assert.equal(scores.transports[0].completed,true);
+  await check(pallets[0],'outLocation',true,b.session);await check(pallets[0],'inWarehouse',true,b.session);
+  scores=await board(a.session);assert.equal(score(scores,b.user.id).palletKm,120);assert.equal(score(scores,b.user.id).pallets,3);
+  await request(`/shipments/${shipment.id}/items`,'POST',{rows:[{name:'Box',palletId:pallets[0].id}]},a.session);
+  const item=(await request(`/shipments/${shipment.id}`,'GET',undefined,a.session)).data.items[0];
+  await request(`/items/${item.id}`,'PATCH',{status:'outWarehouse',checked:true},a.session);
+  assert.equal(score(await board(a.session),a.user.id).checks,4);
+  await request(`/shipments/${shipment.id}`,'PATCH',{archived:true},a.session);assert.equal(score(await board(a.session),a.user.id).palletKm,300);
+  await request('/challenges/settings','PUT',{shared:true});let publicBoard=await board(outsider.session);assert.ok(publicBoard.rows.some(r=>r.id===a.user.id));assert.equal(publicBoard.transports.length,0);
+  await request('/challenges/settings','PUT',{shared:false});
+  await request(`/pallets/${pallets[0].id}`,'DELETE',{},a.session);scores=await board(a.session);assert.equal(score(scores,b.user.id).palletKm,0);assert.equal(score(scores,a.user.id).palletKm,200);
+  await request(`/shipments/${shipment.id}`,'DELETE',{confirmName:shipment.name},a.session);assert.equal(score(await board(a.session),a.user.id).checks,0);
+});
+
+test('Legacy pallet checks have no attribution and challenge periods use the Belgian calendar', async () => {
+  const member=await createMember('challenge-calendar@example.test');
+  const shipment=(await request('/shipments','POST',{name:'Calendar challenge'},member.session)).data;
+  const pallet=(await request(`/shipments/${shipment.id}/pallets`,'POST',{},member.session)).data;
+  const database=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  database.prepare('UPDATE pallets SET statuses=? WHERE id=?').run(JSON.stringify({outWarehouse:'2025-12-31T23:30:00Z'}),pallet.id);
+  await request(`/pallets/${pallet.id}`,'PATCH',{status:'outWarehouse',checked:true},member.session);
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM pallet_checks WHERE palletId=?').get(pallet.id).n,0);
+  await request(`/pallets/${pallet.id}`,'PATCH',{status:'inLocation',checked:true},member.session);
+  database.prepare('UPDATE pallet_checks SET checkedAt=? WHERE palletId=?').run('2025-12-31T23:30:00Z',pallet.id);database.close();
+  let result=await request('/challenges?year=2026&month=1','GET',undefined,member.session);assert.equal(result.data.rows.find(r=>r.id===member.user.id).checks,1);
+  result=await request('/challenges?year=2025','GET',undefined,member.session);assert.equal(result.data.rows.find(r=>r.id===member.user.id).checks,0);
+  assert.equal((await request('/challenges?month=13')).status,400);
+});

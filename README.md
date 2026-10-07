@@ -133,3 +133,15 @@ npm test
 ```
 
 Integration tests cover migrations, authentication, permissions, imports, tracking, photos, exports, conflicts and reusable logos. Browser checks are used during development for tablet layouts and interactive workflows.
+
+## Transport Challenge and route distances
+
+Open **Transport Challenge** for annual or monthly Shipment Finisher (pallet checks), Pallet Champion (arrival confirmations) and Distance Champion (pallet kilometres) leaderboards, badges and personal progress. Only pallet tracking contributes; item tracking does not. Check attribution starts after this upgrade. Rechecking keeps the original user and original date; corrections remove the current credit. Old checks without attribution do not count.
+
+Each shipment has a warehouse/return address and an outbound address, entered directly in **Shipment settings → Transport addresses and distances**. There is no location library. Administrators can set a default warehouse address in Challenge settings; new shipments inherit it. Existing destination names and dates remain available. Labels use the physical addresses when present.
+
+For automatic distances, set `ORS_API_KEY` on the server (Railway service → Variables). Keys come from https://account.heigit.org/. The key stays on the server and is never returned to the browser. Administrators can use **Test route connection** to check both geocoding and directions. Search each full address and select the correct match, then choose **Calculate and save distances**. The server uses the current HeiGIT Pelias and openrouteservice endpoints. Address matching and routes are based on OpenStreetMap data; distances use driving-car routes, not vehicle-specific truck restrictions or GPS measurements. Selected coordinates and distances are persisted; routes are cached for 30 days. Manual distances and corrections are available when routing is unavailable or not configured. Addresses are sent to HeiGIT only on an explicit search or calculation.
+
+Outbound points use Out warehouse + In location checks; return points use Out location + In warehouse checks. The user with the most active checks on a leg receives its distance rewards; tied users split them equally. Only arrival checks with user attribution earn pallet kilometres. Rewards for partial arrivals are provisional and can change as further checks are recorded. The reward is complete when every pallet has an attributed arrival. Year/month filters use the Belgian calendar and original arrival date. Archiving preserves scores; deleting a pallet or shipment removes its scores. Physical pallets are not tracked across shipments.
+
+By default, leaderboards include only shipments visible to the current user. Administrators can enable a shared leaderboard of user names and totals. Shipment details always require access, including in the shared view. This switch affects all users and can be disabled at any time.

@@ -13,6 +13,7 @@ import { nextPalletNumber, palletName, objectNameKey } from '../shared/numbering
 import { installAuth } from './auth.js';
 import { archiveShipment } from './archive-photos.js';
 import { installExports } from './exports.js';
+import { installChallenges } from './challenges.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = process.env.DATA_DIR || path.join(root, 'data');
@@ -74,6 +75,7 @@ app.use('/api', (req, res, next) => {
   }
   next();
 });
+const challenges = installChallenges(app, db, auth);
 installExports(app, db, auth);
 const requireShipment = auth.requireShipment;
 const requirePallet = (id, shipmentId) => { if (!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id, shipmentId)) throw fail('This pallet does not belong to this shipment.'); };
@@ -102,9 +104,11 @@ function routeFields(body) {
 app.post('/api/shipments', (req, res) => {
   const name = clean(req.body.name), destination = clean(req.body.destination);
   if (!name) throw fail('Enter a shipment name.');
+  for (const key of ['warehouseAddress', 'outboundAddress']) if (key in req.body && (typeof req.body[key] !== 'string' || req.body[key].length > 500)) throw fail('Enter an address of up to 500 characters.');
   const shipment = { id: randomUUID(), name, destination, createdAt: new Date().toISOString(), ownerId: req.user.id, returnDestination: '', outboundDate: '', returnDate: '', ...routeFields(req.body) };
   db.prepare('INSERT INTO shipments (id, name, destination, createdAt, ownerId, returnDestination, outboundDate, returnDate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(shipment.id, name, destination, shipment.createdAt, shipment.ownerId, shipment.returnDestination, shipment.outboundDate, shipment.returnDate);
-  res.status(201).json(auth.viewShipment(req.user, shipment));
+  db.prepare('UPDATE shipments SET warehouseAddress=?,outboundAddress=? WHERE id=?').run(req.body.warehouseAddress?.trim() || challenges.defaultWarehouse(), req.body.outboundAddress?.trim() || '', shipment.id);
+  res.status(201).json(auth.viewShipment(req.user, db.prepare('SELECT * FROM shipments WHERE id=?').get(shipment.id)));
 });
 app.patch('/api/shipments/:id', async (req, res) => {
   const shipment = requireShipment(req.user, req.params.id, true);
@@ -189,9 +193,14 @@ app.patch('/api/pallets/:id', (req, res) => {
   const statuses = JSON.parse(pallet.statuses);
   if ('status' in req.body) {
     if (!['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse'].includes(req.body.status) || typeof req.body.checked !== 'boolean') throw fail('Invalid status.');
-    statuses[req.body.status] = req.body.checked ? new Date().toISOString() : null;
+    statuses[req.body.status] = req.body.checked ? (statuses[req.body.status] || new Date().toISOString()) : null;
   }
-  db.prepare('UPDATE pallets SET name=?, statuses=? WHERE id=?').run(name, JSON.stringify(statuses), pallet.id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if ('status' in req.body) challenges.record(pallet, req.body.status, req.body.checked, req.user.id, statuses[req.body.status]);
+    db.prepare('UPDATE pallets SET name=?, statuses=? WHERE id=?').run(name, JSON.stringify(statuses), pallet.id);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   res.json(palletView(db.prepare('SELECT * FROM pallets WHERE id=?').get(pallet.id)));
 });
 app.delete('/api/pallets/:id', (req, res) => {
