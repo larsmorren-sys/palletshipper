@@ -857,3 +857,17 @@ test('Own profile supports nickname and optional challenge participation without
   await stop();await start();assert.equal((await request('/auth/session','GET',undefined,a.session)).data.user.challengeParticipating,true);
   const dbAfter=new DatabaseSync(path.join(dir,'shipments.sqlite'));assert.equal(dbAfter.prepare('SELECT passwordHash FROM users WHERE id=?').get(a.user.id).passwordHash,hashBefore);dbAfter.close();
 });
+
+test('Shipment creation preserves manual names and selected address coordinates and calculates challenge distance', async () => {
+  const member=await createMember('new-addresses@example.test');
+  const body={name:'Grouped creation',destination:'Outbound label name',returnDestination:'Return label name',outboundDate:'2026-11-01',returnDate:'2026-11-15',warehouseAddress:'Vilvoorde, Belgium',outboundAddress:'Whistler, Canada',warehouseCoordinates:[4.43,50.93],outboundCoordinates:[-122.96,50.12]};
+  const result=await request('/shipments','POST',body,member.session);assert.equal(result.status,201);
+  for(const key of ['destination','returnDestination','outboundDate','returnDate','warehouseAddress','outboundAddress'])assert.equal(result.data[key],body[key]);
+  assert.deepEqual(JSON.parse(result.data.warehouseCoordinates),body.warehouseCoordinates);assert.deepEqual(JSON.parse(result.data.outboundCoordinates),body.outboundCoordinates);
+  assert.equal(result.data.distanceSource,'straight-line');assert.ok(result.data.outboundKm>7500);assert.equal(result.data.returnKm,result.data.outboundKm);
+  const before=(await request('/shipments','GET',undefined,member.session)).data.length;
+  assert.equal((await request('/shipments','POST',{...body,warehouseCoordinates:[500,50]},member.session)).status,400);
+  assert.equal((await request('/shipments','POST',{...body,outboundAddress:''},member.session)).status,400);
+  assert.equal((await request('/shipments','GET',undefined,member.session)).data.length,before);
+  const partial=await request('/shipments','POST',{...body,warehouseCoordinates:null},member.session);assert.equal(partial.status,201);assert.equal(partial.data.distanceSource,null);assert.equal(partial.data.outboundKm,null);
+});

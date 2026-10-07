@@ -36,6 +36,8 @@ For Railway setup, use the deployment instructions below: configure `SETUP_TOKEN
 
 Log in as the administrator and use **User management** to create accounts. Create a shipment and use **Shipment settings → User access → Manage user access** to assign users who may view and update it. Ordinary users cannot create their own account on the login screen.
 
+The **New shipment** form groups each outbound/return location name with its address, followed by the outbound and return dates. Use **Find address** beside each address and select a match, just as in Shipment settings. The configured warehouse address is prefilled. Confirming both addresses saves the straight-line challenge distance automatically when creating the shipment. Location names remain separate and are the only location text used on labels and reports. You can also create a shipment without confirming its addresses and configure distances later.
+
 Add pallets, import or add equipment, and use **Pallet overview** for pallet-level transport checks. Item-level tracking is separate and does not earn challenge points.
 
 ### 4. Set up addresses and optional automatic distances

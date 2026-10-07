@@ -1,0 +1,22 @@
+import React, { useEffect, useState } from 'react';
+import { api } from './api.js';
+
+export function AddressField({ label, value, onChange, configured, disabled }) {
+  const [matches, setMatches] = useState([]), [searching, setSearching] = useState(false), [error, setError] = useState('');
+  return <div className="route-address"><label>{label}<input maxLength="500" value={value.address} disabled={disabled || searching} placeholder="Street, number, postcode, town, country" onChange={e => { setMatches([]); setError(''); onChange({ address: e.target.value, coordinates: null }); }}/></label><button type="button" className="secondary" disabled={disabled || searching || !configured || value.address.trim().length < 5} onClick={async () => { setSearching(true); setError(''); setMatches([]); try { const result = await api('/api/routing/search', { method: 'POST', body: { address: value.address } }); setMatches(result.matches); if (!result.matches.length) setError('No matches found. Add a postcode and country, or keep the address without confirmation.'); } catch(e) { setError(e.message); } finally { setSearching(false); } }}>{searching ? 'Searching…' : 'Find address'}</button>{value.coordinates && <small className="form-hint">Address confirmed</small>}{error && <p className="form-error" role="alert">{error}</p>}{!!matches.length && <div className="address-matches" role="group" aria-label={`${label} matches`}>{matches.map((match, index) => <button type="button" className="secondary" key={index} disabled={disabled} onClick={() => { onChange(match); setMatches([]); }}>{match.address}</button>)}</div>}</div>;
+}
+
+export function NewShipmentForm({ busy, error, onCreate, onCancel }) {
+  const [warehouse, setWarehouse] = useState({ address: '', coordinates: null }), [outbound, setOutbound] = useState({ address: '', coordinates: null }), [config, setConfig] = useState(null), [configError, setConfigError] = useState('');
+  useEffect(() => { let ignore = false; api('/api/challenges/settings').then(value => { if (!ignore) { setConfig(value); setWarehouse(current => current.address ? current : { address: value.warehouseAddress, coordinates: null }); } }).catch(e => { if (!ignore) setConfigError(e.message); }); return () => { ignore = true; }; }, []);
+  return <form className="new-shipment-form" onSubmit={e => { e.preventDefault(); const fields = Object.fromEntries(new FormData(e.currentTarget)); onCreate({ ...fields, outboundAddress: outbound.address, warehouseAddress: warehouse.address, outboundCoordinates: outbound.coordinates, warehouseCoordinates: warehouse.coordinates }); }}>
+    <label>Shipment name<input name="name" required autoFocus maxLength="200" disabled={busy} placeholder="e.g. Whistler exhibition"/></label>
+    <section className="settings-section"><h3>Outbound</h3><label>Outbound location name<input name="destination" maxLength="200" disabled={busy} placeholder="Name shown on labels and reports"/></label><AddressField label="Outbound address" value={outbound} onChange={setOutbound} configured={config?.routingConfigured} disabled={busy}/></section>
+    <section className="settings-section"><h3>Return / warehouse</h3><label>Return location name<input name="returnDestination" maxLength="200" disabled={busy} placeholder="Name shown on labels and reports"/></label><AddressField label="Warehouse / return address" value={warehouse} onChange={setWarehouse} configured={config?.routingConfigured} disabled={busy}/></section>
+    <section className="settings-section"><h3>Dates</h3><div className="form-grid"><label>Outbound date<input name="outboundDate" type="date" disabled={busy}/></label><label>Return date<input name="returnDate" type="date" disabled={busy}/></label></div></section>
+    <p className="form-hint">Location names appear on labels and reports. Addresses are only used for the challenge. Confirm both addresses to save their straight-line distance automatically. The warehouse is also the departure location.</p>
+    {config && !config.routingConfigured && <p className="form-hint">Address search is not configured. You can create the shipment now and set its challenge distance later.</p>}
+    {(error || configError) && <p className="form-error" role="alert">{error || configError}</p>}
+    <div className="modal-footer"><button type="button" className="secondary" disabled={busy} onClick={onCancel}>Cancel</button><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Create shipment'}</button></div>
+  </form>;
+}

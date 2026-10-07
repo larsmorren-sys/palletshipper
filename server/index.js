@@ -14,6 +14,7 @@ import { installAuth } from './auth.js';
 import { archiveShipment } from './archive-photos.js';
 import { installExports } from './exports.js';
 import { installChallenges } from './challenges.js';
+import { coordinates, straightLineDistances } from './routing.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = process.env.DATA_DIR || path.join(root, 'data');
@@ -105,9 +106,12 @@ app.post('/api/shipments', (req, res) => {
   const name = clean(req.body.name), destination = clean(req.body.destination);
   if (!name) throw fail('Enter a shipment name.');
   for (const key of ['warehouseAddress', 'outboundAddress']) if (key in req.body && (typeof req.body[key] !== 'string' || req.body[key].length > 500)) throw fail('Enter an address of up to 500 characters.');
+  const warehouse = coordinates(req.body.warehouseCoordinates), outbound = coordinates(req.body.outboundCoordinates);
+  if (warehouse && !req.body.warehouseAddress?.trim() || outbound && !req.body.outboundAddress?.trim()) throw fail('Provide the address for each confirmed location.');
+  const distances = warehouse && outbound ? straightLineDistances(warehouse, outbound) : null;
   const shipment = { id: randomUUID(), name, destination, createdAt: new Date().toISOString(), ownerId: req.user.id, returnDestination: '', outboundDate: '', returnDate: '', ...routeFields(req.body) };
   db.prepare('INSERT INTO shipments (id, name, destination, createdAt, ownerId, returnDestination, outboundDate, returnDate) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(shipment.id, name, destination, shipment.createdAt, shipment.ownerId, shipment.returnDestination, shipment.outboundDate, shipment.returnDate);
-  db.prepare('UPDATE shipments SET warehouseAddress=?,outboundAddress=? WHERE id=?').run(req.body.warehouseAddress?.trim() || challenges.defaultWarehouse(), req.body.outboundAddress?.trim() || '', shipment.id);
+  db.prepare('UPDATE shipments SET warehouseAddress=?,outboundAddress=?,warehouseCoordinates=?,outboundCoordinates=?,outboundKm=?,returnKm=?,distanceSource=?,distanceUpdatedAt=? WHERE id=?').run(req.body.warehouseAddress?.trim() || challenges.defaultWarehouse(), req.body.outboundAddress?.trim() || '', warehouse ? JSON.stringify(warehouse) : null, outbound ? JSON.stringify(outbound) : null, distances?.outboundKm ?? null, distances?.returnKm ?? null, distances ? 'straight-line' : null, distances ? new Date().toISOString() : null, shipment.id);
   res.status(201).json(auth.viewShipment(req.user, db.prepare('SELECT * FROM shipments WHERE id=?').get(shipment.id)));
 });
 app.patch('/api/shipments/:id', async (req, res) => {
