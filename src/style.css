@@ -41,3 +41,5 @@
 .checkbox-label{flex-direction:row!important;align-items:flex-start!important;line-height:1.6}.checkbox-label>input{flex-shrink:0;margin-top:3px;accent-color:#426642}
 .challenge-content>.form-hint{margin:16px 0}.challenge-personal>label{display:block;line-height:1.6}
 @media(max-width:650px){.modal .form-grid{grid-template-columns:1fr}.route-actions>button{flex-basis:100%}.settings-section>form>.primary{align-self:stretch;white-space:normal}.modal-footer>button{white-space:normal}.modal>header h2{font-size:19px}}
+
+.page-footer{align-items:center}.footer-actions{display:flex;align-items:center;gap:12px}.challenge-footer-button{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:8px;background:transparent;color:#86947d}.challenge-footer-button:hover,.challenge-footer-button:focus-visible{background:#eaf1eb;color:#254d3d}

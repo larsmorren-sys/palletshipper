@@ -54,7 +54,9 @@ If the key is rejected, check that you copied the full active Standard key from 
 
 ### 5. Start the challenge
 
-Open **Transport Challenge** for leaderboards, badges and your progress. New pallet checks record the user automatically; no transport-responsible person needs to be assigned. Existing checks without a recorded user do not earn points. The scoring rules are explained below.
+The **star icon in the footer** opens Transport Challenge. It is available on computers and tablets and has a tooltip and accessible name.
+
+Open **Transport Challenge** using the star button in the page footer for leaderboards, badges and your progress. New pallet checks record the user automatically; no transport-responsible person needs to be assigned. Existing checks without a recorded user do not earn points. The scoring rules are explained below.
 
 By default, each user sees scores from shipments they can access. To run a common competition, an administrator can enable **Share user names and total scores across all shipments** in Challenge settings. Shipment details remain restricted by access permissions.
 
@@ -193,7 +195,7 @@ Tests cover migrations, authentication, permissions, imports, tracking, photos, 
 
 ## Transport Challenge and route distances
 
-Open **Transport Challenge** for annual or monthly Shipment Finisher (pallet checks), Pallet Champion (arrival confirmations) and Distance Champion (pallet kilometres) leaderboards, badges and personal progress. Only pallet tracking contributes; item tracking does not. Check attribution starts after this upgrade. Rechecking keeps the original user and original date; corrections remove the current credit. Old checks without attribution do not count.
+Open **Transport Challenge** using the star button in the page footer for annual or monthly Shipment Finisher (pallet checks), Pallet Champion (arrival confirmations) and Distance Champion (pallet kilometres) leaderboards, badges and personal progress. Only pallet tracking contributes; item tracking does not. Check attribution starts after this upgrade. Rechecking keeps the original user and original date; corrections remove the current credit. Old checks without attribution do not count.
 
 Each shipment has a warehouse/return address and an outbound address, entered directly in **Shipment settings → Transport addresses and distances**. There is no location library. Administrators can set a default warehouse address in Challenge settings; new shipments inherit it. Existing destination names and dates remain available. Labels and reports always use the manually entered location names, never the challenge addresses. Physical addresses are used only for the game distance calculation.
 
