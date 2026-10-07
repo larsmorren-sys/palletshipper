@@ -24,3 +24,23 @@ test('Routing uses HeiGIT endpoints, validates matches, caches each direction an
     assert.throws(()=>coordinates([190,51]),/valid address/);assert.throws(()=>coordinates(['4',51]),/valid address/);
   } finally {globalThis.fetch=previousFetch;if(previousKey===undefined)delete process.env.ORS_API_KEY;else process.env.ORS_API_KEY=previousKey;db.close();}
 });
+
+test('Provider errors distinguish road access, missing routes, gateway failures and unavailable endpoints without leaking upstream data', async () => {
+  const previousFetch=globalThis.fetch,previousKey=process.env.ORS_API_KEY;process.env.ORS_API_KEY='secret-routing-test-key';
+  try {
+    for(const [status,code,pattern] of [[404,2010,/not close enough to a road/],[404,2009,/No drivable route/],[400,2004,/distance or request limit/],[400,2002,/rejected the request/],[404,null,/endpoint is unavailable/],[503,null,/temporarily unavailable/]]) {
+      globalThis.fetch=async()=>new Response(JSON.stringify({error:{code,message:'secret-routing-test-key echoed request'}}),{status});
+      await assert.rejects(()=>providerRequest('openrouteservice/v2/directions/driving-car/json',{coordinates:[[4,51],[5,50]]}),error=>pattern.test(error.message)&&error.message.includes(`HTTP ${status}`)&&!error.message.includes('secret-routing-test-key'));
+    }
+    globalThis.fetch=async()=>new Response('<html>secret-routing-test-key 400 Bad Request</html>',{status:400});
+    await assert.rejects(()=>providerRequest('openrouteservice/v2/directions/driving-car/json',{}),error=>error.message.includes('HTTP 400')&&!error.message.includes('secret-routing-test-key'));
+    const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE route_cache(key TEXT PRIMARY KEY,outboundKm REAL,returnKm REAL,createdAt INTEGER)');
+    try {
+      db.prepare('INSERT INTO route_cache VALUES(?,?,?,?)').run(JSON.stringify([[4,51],[5,50]]),100,110,Date.now());
+      await assert.rejects(()=>drivingDistances(db,[4,51],[5,50],{refresh:true}),/Outbound route:.*HTTP 400/);
+      let calls=0;globalThis.fetch=async()=>++calls===1?new Response(JSON.stringify({routes:[{summary:{distance:1000}}]})):new Response(JSON.stringify({error:{code:2010}}),{status:404});
+      await assert.rejects(()=>drivingDistances(db,[4,51],[5,50],{refresh:true}),/Return route:.*ORS 2010/);
+      assert.equal(db.prepare('SELECT outboundKm FROM route_cache').get().outboundKm,100,'Failed recalculations preserve the last successful cache');
+    } finally{db.close();}
+  }finally{globalThis.fetch=previousFetch;if(previousKey===undefined)delete process.env.ORS_API_KEY;else process.env.ORS_API_KEY=previousKey;}
+});

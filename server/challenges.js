@@ -34,7 +34,7 @@ export function installChallenges(app, db, auth) {
     if (req.user.role !== 'admin') throw fail('Only administrators can test the route connection.', 403);
     routeLimit(req);
     await searchAddress('Heidelberg, Germany');
-    await drivingDistances(db, [8.681495, 49.41461], [8.687872, 49.420318]);
+    await drivingDistances(db, [8.681495, 49.41461], [8.687872, 49.420318], { refresh: true });
     res.json({ ok: true, message: 'API key accepted. Address search and driving distances are working.' });
   });
   app.put('/api/shipments/:id/route', async (req, res) => {

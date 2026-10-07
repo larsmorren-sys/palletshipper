@@ -48,6 +48,8 @@ Add pallets, import or add equipment, and use **Pallet overview** for pallet-lev
 6. As an administrator, select **Transport Challenge → Test route connection**. A successful result confirms both address search and driving-distance access. A configured key is not necessarily a valid key; this test verifies it.
 7. For each shipment, select **Find address** for both addresses and choose the correct matches. Then select **Calculate and save distances**. Both driving directions are calculated and saved separately.
 
+If distance calculation fails, the message identifies the outbound or return leg and includes the HTTP status and, when available, the provider's numeric error code. `ORS 2010` means a selected point is not near a road accessible by car; choose the full street address or accessible entrance rather than a town or site centre. `ORS 2009` means no drivable route was found. If **Test route connection** succeeds but your shipment fails, check the selected matches for both addresses. The connection test always calls the live provider, even if an example route was previously cached.
+
 If the key is rejected, check that you copied the full active Standard key from the HeiGIT account dashboard. If a quota is reached or the service is unavailable, keep using manual distances. This optional integration is not required for the application to start.
 
 ### 5. Start the challenge
