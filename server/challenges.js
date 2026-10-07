@@ -10,6 +10,7 @@ export function installChallenges(app, db, auth) {
   db.exec(`CREATE TABLE IF NOT EXISTS challenge_settings (id INTEGER PRIMARY KEY CHECK(id=1), shared INTEGER NOT NULL DEFAULT 0, warehouseAddress TEXT NOT NULL DEFAULT '');
     INSERT OR IGNORE INTO challenge_settings(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS pallet_checks(palletId TEXT NOT NULL REFERENCES pallets(id) ON DELETE CASCADE, stage TEXT NOT NULL, userId TEXT NOT NULL REFERENCES users(id), checkedAt TEXT NOT NULL, active INTEGER NOT NULL, PRIMARY KEY(palletId,stage));`);
+  if (!db.prepare('PRAGMA table_info(challenge_settings)').all().some(c => c.name === 'warehouseCoordinates')) db.exec('ALTER TABLE challenge_settings ADD COLUMN warehouseCoordinates TEXT');
   // Upgrade previously automatic road distances; preserve all manual overrides.
   for (const shipment of db.prepare("SELECT * FROM shipments WHERE distanceSource='openrouteservice'").all()) {
     try {
@@ -18,14 +19,16 @@ export function installChallenges(app, db, auth) {
     } catch { /* Keep incomplete legacy routes available for manual correction. */ }
   }
   const visibleShipments = user => user.role === 'admin' ? db.prepare('SELECT * FROM shipments').all() : db.prepare('SELECT * FROM shipments s WHERE s.ownerId=? OR EXISTS(SELECT 1 FROM shipment_access a WHERE a.shipmentId=s.id AND a.userId=?)').all(user.id, user.id);
-  const settings = () => db.prepare('SELECT * FROM challenge_settings WHERE id=1').get();
+  const settings = () => { const value = db.prepare('SELECT * FROM challenge_settings WHERE id=1').get(); return { ...value, warehouseCoordinates: value.warehouseCoordinates ? JSON.parse(value.warehouseCoordinates) : null }; };
   app.get('/api/challenges/settings', (req, res) => res.json({ ...settings(), shared: !!settings().shared, routingConfigured: routingConfigured() }));
   app.put('/api/challenges/settings', (req, res) => {
     if (req.user.role !== 'admin') throw fail('Only administrators can change challenge settings.', 403);
     const current = settings();
     const { shared = !!current.shared, warehouseAddress = current.warehouseAddress } = req.body;
     if (typeof shared !== 'boolean' || typeof warehouseAddress !== 'string' || warehouseAddress.trim().length > 500) throw fail('Enter valid challenge settings.');
-    db.prepare('UPDATE challenge_settings SET shared=?, warehouseAddress=? WHERE id=1').run(Number(shared), warehouseAddress.trim());
+    const warehouse = 'warehouseCoordinates' in req.body ? coordinates(req.body.warehouseCoordinates) : warehouseAddress.trim() === current.warehouseAddress ? current.warehouseCoordinates : null;
+    if (warehouse && !warehouseAddress.trim()) throw fail('Provide the address for the confirmed warehouse.');
+    db.prepare('UPDATE challenge_settings SET shared=?, warehouseAddress=?,warehouseCoordinates=? WHERE id=1').run(Number(shared), warehouseAddress.trim(), warehouse ? JSON.stringify(warehouse) : null);
     res.json({ ok: true });
   });
   const attempts = new Map();
@@ -96,7 +99,7 @@ export function installChallenges(app, db, auth) {
     res.json({ year, month, years, shared, participating: scores.has(req.user.id), rows, transports });
   });
   return {
-    defaultWarehouse: () => settings().warehouseAddress,
+    defaultWarehouse: () => ({ address: settings().warehouseAddress, coordinates: settings().warehouseCoordinates }),
     record(pallet, stage, checked, userId, timestamp) {
       const wasChecked = !!JSON.parse(pallet.statuses)[stage];
       if (wasChecked === checked) return;

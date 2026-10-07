@@ -871,3 +871,26 @@ test('Shipment creation preserves manual names and selected address coordinates 
   assert.equal((await request('/shipments','GET',undefined,member.session)).data.length,before);
   const partial=await request('/shipments','POST',{...body,warehouseCoordinates:null},member.session);assert.equal(partial.status,201);assert.equal(partial.data.distanceSource,null);assert.equal(partial.data.outboundKm,null);
 });
+
+test('Confirmed default warehouse is reused for new shipments and invalidated when its address changes', async () => {
+  const member = await createMember('default-warehouse@test.example');
+  const settings = {warehouseAddress:'Confirmed warehouse, Belgium',warehouseCoordinates:[4.43,50.93],shared:false};
+  assert.equal((await request('/challenges/settings','PUT',settings,member.session)).status,403);
+  assert.equal((await request('/challenges/settings','PUT',{...settings,warehouseCoordinates:[500,50]})).status,400);
+  assert.equal((await request('/challenges/settings','PUT',settings)).status,200);
+  assert.deepEqual((await request('/challenges/settings','GET',undefined,member.session)).data.warehouseCoordinates,settings.warehouseCoordinates);
+  await request('/challenges/settings','PUT',{shared:true});
+  for (const extra of [{},{warehouseAddress:settings.warehouseAddress,warehouseCoordinates:null}]) {
+    const result = await request('/shipments','POST',{name:'Inherited warehouse',outboundAddress:'Whistler, Canada',outboundCoordinates:[-122.96,50.12],...extra},member.session);
+    assert.equal(result.status,201);
+    assert.equal(result.data.warehouseAddress,settings.warehouseAddress);
+    assert.deepEqual(JSON.parse(result.data.warehouseCoordinates),settings.warehouseCoordinates);
+    assert.equal(result.data.distanceSource,'straight-line');
+    assert.ok(result.data.outboundKm>7000);
+  }
+  const other = await request('/shipments','POST',{name:'Other warehouse',warehouseAddress:'Different warehouse',outboundAddress:'Whistler, Canada',outboundCoordinates:[-122.96,50.12]},member.session);
+  assert.equal(other.data.warehouseCoordinates,null);
+  assert.equal(other.data.distanceSource,null);
+  assert.equal((await request('/challenges/settings','PUT',{warehouseAddress:'Changed warehouse'})).status,200);
+  assert.equal((await request('/challenges/settings')).data.warehouseCoordinates,null);
+});
