@@ -2,34 +2,85 @@
 
 A shipment and pallet management application built with React, Vite, Tailwind CSS, Node.js and Express. Each shipment contains pallets and individual equipment items. Items and pallets have independent tracking for **Out warehouse**, **In location**, **Out location** and **In warehouse**.
 
-## Run locally
+## Start here: new installation
 
-Use Node.js 24 or later.
+Each installation has its own database, users and optional route-service key. This repository contains application code only: it does not include the original installation's accounts, shipments, photos, API key or setup code. A fresh installation starts empty. You do not need a route-service account to use shipments, tracking, challenges or manually entered distances.
+
+You need **Node.js 24 or later**, npm (included with Node.js), and Git if you want to clone the repository. Check your version with `node --version`.
+
+### 1. Download and start locally
 
 ```sh
+git clone https://github.com/larsmorren-sys/palletshipper.git
+cd palletshipper
 npm ci
+cp .env.example .env
 npm run dev
 ```
 
-Open the Vite address, normally http://localhost:5173. The backend listens on port 3001. SQLite, uploaded photos and installation data are stored in `data/` and survive restarts. An internet or local network connection is required; offline synchronization is not implemented.
+If you download a ZIP instead, extract it, open a terminal in the extracted project folder, and start from `npm ci`. On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
 
-For the production build:
+Open the Vite address printed in the terminal, normally http://localhost:5173. The backend listens on port 3001. Keep `PORT=3001` in development: the included Vite proxy points to that port. An internet or local network connection is required; offline synchronization is not implemented.
+
+Both `npm run dev` and `npm start` load the optional `.env` file automatically. Already-set environment variables take precedence, including Railway Variables. Restart the application after changing `.env`. The example file contains no real credentials; keep your actual `.env` private.
+
+### 2. Create your first administrator
+
+On first backend startup, the application creates an empty SQLite database and a setup code in `data/setup-token.txt` (or the directory set by `DATA_DIR`). Open that file locally and enter its contents in **Create your administrator account**, together with your name, email address and a password of at least 12 characters.
+
+The setup file is deleted after the first administrator is created. Its absence is normal after setup. There are no default credentials and no public sign-up. On an existing installation, log in with an existing account; downloading a new copy of the code does not create another account in the same database.
+
+For Railway setup, use the deployment instructions below: configure `SETUP_TOKEN` in Railway Variables instead of looking for a setup file in GitHub.
+
+### 3. Add users and create a shipment
+
+Log in as the administrator and use **User management** to create accounts. Create a shipment and use **Shipment settings → User access → Manage user access** to assign users who may view and update it. Ordinary users cannot create their own account on the login screen.
+
+Add pallets, import or add equipment, and use **Pallet overview** for pallet-level transport checks. Item-level tracking is separate and does not earn challenge points.
+
+### 4. Set up addresses and optional automatic distances
+
+1. As an administrator, open **Transport Challenge → Challenge settings** and enter the **Default warehouse address**. New shipments inherit it; existing shipments can be updated individually.
+2. In **Shipment settings → Transport addresses and distances**, enter the warehouse address and outbound address. The warehouse is both the departure and return location. No location library is required.
+3. For manual distances, enter outbound and return kilometres and select **Save manual route**. This works without an API key.
+4. For automatic distances, create your own account at [HeiGIT](https://account.heigit.org/), confirm your email, and copy the **Standard API key** from your dashboard.
+5. Locally, paste the key after `ORS_API_KEY=` in your private `.env` and restart `npm run dev`. On Railway, add `ORS_API_KEY` to your service's **Variables** and apply the deployment. Do not add it to `.env.example`, source code, screenshots or GitHub.
+6. As an administrator, select **Transport Challenge → Test route connection**. A successful result confirms both address search and driving-distance access. A configured key is not necessarily a valid key; this test verifies it.
+7. For each shipment, select **Find address** for both addresses and choose the correct matches. Then select **Calculate and save distances**. Both driving directions are calculated and saved separately.
+
+If the key is rejected, check that you copied the full active Standard key from the HeiGIT account dashboard. If a quota is reached or the service is unavailable, keep using manual distances. This optional integration is not required for the application to start.
+
+### 5. Start the challenge
+
+Open **Transport Challenge** for leaderboards, badges and your progress. New pallet checks record the user automatically; no transport-responsible person needs to be assigned. Existing checks without a recorded user do not earn points. The scoring rules are explained below.
+
+By default, each user sees scores from shipments they can access. To run a common competition, an administrator can enable **Share user names and total scores across all shipments** in Challenge settings. Shipment details remain restricted by access permissions.
+
+## Configuration and storage
+
+| Variable | Default / purpose |
+| --- | --- |
+| `PORT` | `3001`. Keep this value for the included development proxy. Railway supplies its own port. |
+| `DATA_DIR` | Project `data/` directory when unset. Stores SQLite, photos and the local setup file. Use `/data` with a persistent volume on Railway. |
+| `SETUP_TOKEN` | Optional first-administrator setup code. Without it, a fresh local installation generates `setup-token.txt` in its data directory. Remove the variable after setup. |
+| `ORS_API_KEY` | Optional server-only HeiGIT Standard key for address search and driving distances. Manual distances work without it. |
+| `APP_URL` | Optional public base URL for printed QR codes. When unset, labels use the domain on which they are opened. Use an HTTPS URL in production. |
+| `NODE_ENV` | Set to `production` for HTTPS hosting; the Dockerfile already does this. Production session cookies require HTTPS. Leave unset for local HTTP development. |
+
+Data survives restarts only when the storage directory is retained. Back up the entire data directory, including photos. Stop the application before making a simple filesystem copy of SQLite and its associated files. Archiving a shipment is not a backup. Updating the code applies database migrations automatically and does not erase existing data.
+
+For a local production build:
 
 ```sh
 npm run build
 npm start
 ```
 
-The Node server serves both the interface and API. `PORT` controls the listening port and `DATA_DIR` controls the storage directory. Use one server instance with the current SQLite storage.
+Open http://localhost:3001. The Node server serves both the interface and API. Use one server instance with the current SQLite storage.
 
-## Initial setup and accounts
+## Accounts and security
 
-On a new installation, open **Create your administrator account** and enter your name, email address and a password of at least 12 characters.
-
-- Locally, the setup code is generated in `data/setup-token.txt`. The file is deleted after the first administrator account is created.
-- On Railway, set a long random `SETUP_TOKEN` before the first deployment. Use its value in the setup form, then remove the variable after installation.
-
-There are no default accounts or passwords and no public registration. Initial setup closes once an administrator exists. Administrators create accounts using **User management** and can change names, email addresses, roles, passwords and active status. Password resets, role changes and deactivation revoke existing sessions. At least one active administrator must remain. Accounts are deactivated rather than deleted.
+Initial setup closes once an administrator exists. Administrators create accounts using **User management** and can change names, email addresses, roles, passwords and active status. Password resets, role changes and deactivation revoke existing sessions. At least one active administrator must remain. Accounts are deactivated rather than deleted.
 
 Click your name to change your own password. Other sessions are signed out. Email invitations, email recovery and two-factor authentication are not implemented.
 
@@ -42,7 +93,7 @@ Administrators can see all shipments. Other users can see shipments they created
 Shipment settings also include:
 
 - Shipment name and location details.
-- **Outbound destination**, **Outbound date**, **Return destination** and **Return date**.
+- Outbound and warehouse display names, outbound/return dates, physical warehouse/return and outbound addresses, and distances in each direction.
 - A custom logo and the logo library.
 - Archiving, restoring and permanent deletion.
 
@@ -113,15 +164,19 @@ Permanent shipment deletion requires typing its exact name. It removes pallets, 
 
 ## Collaboration
 
-The active shipment refreshes every five seconds and when returning to the window. Refresh pauses during forms and local changes. Item, pallet and shipment edits and deletions send their read version: stale operations are rejected and the current data is retrieved. Close and reopen the form to continue after a conflict. API clients must send `revision` to enable this check. There is no audit log of who checked each status.
+The active shipment refreshes every five seconds and when returning to the window. Refresh pauses during forms and local changes. Item, pallet and shipment edits and deletions send their read version: stale operations are rejected and the current data is retrieved. Close and reopen the form to continue after a conflict. API clients must send `revision` to enable this check. Pallet checks record the original user and timestamp for challenge credit. A full change audit log and item-check attribution are not implemented.
 
 ## Deploy on Railway
 
 1. Create a Railway service from the GitHub repository. The included Dockerfile builds the application.
 2. Attach a persistent volume at `/data`. The Dockerfile sets `DATA_DIR=/data`. Without a volume, data is lost on redeployment.
-3. Set a random `SETUP_TOKEN` before the first deployment and generate an HTTPS domain.
-4. Create the first administrator through that domain, then remove `SETUP_TOKEN`.
-5. Use one replica and configure volume backups. Multiple instances require shared database and image storage.
+3. Set a long random `SETUP_TOKEN` in service **Variables** before the first deployment and generate an HTTPS domain. You can generate a value locally with `node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))"`.
+4. Create the first administrator through that domain using the configured setup code, then remove `SETUP_TOKEN` from Railway Variables.
+5. Optionally set `ORS_API_KEY` to your own HeiGIT Standard key and `APP_URL` to the public HTTPS domain. Apply the deployment, then use **Transport Challenge → Test route connection** as an administrator.
+6. Set the default warehouse address and, if wanted, enable the shared leaderboard in **Transport Challenge → Challenge settings**. Add users and shipment access in the application.
+7. Use one replica and configure volume backups. Multiple instances require shared database and image storage.
+
+The committed `.env.example` is a local template, not the Railway configuration. Enter actual values in Railway Variables. The Dockerfile already sets `NODE_ENV=production` and `DATA_DIR=/data`; do not override the data directory with the local template's `./data`. Keep Railway's supplied `PORT`.
 
 The healthcheck is `/api/health`. Production cookies require HTTPS. Repository contents exclude databases, accounts, uploads, environment files and setup codes. A new checkout creates an empty database on first backend startup; existing local data is not deleted.
 
@@ -132,7 +187,7 @@ npm run build
 npm test
 ```
 
-Integration tests cover migrations, authentication, permissions, imports, tracking, photos, exports, conflicts and reusable logos. Browser checks are used during development for tablet layouts and interactive workflows.
+Tests cover migrations, authentication, permissions, imports, tracking, photos, exports, conflicts, reusable logos, challenge attribution, score corrections, calendar periods, route validation and provider failure handling. Route-provider tests use mock responses and do not require a real API key. Browser checks are used during development for tablet layouts and interactive workflows.
 
 ## Transport Challenge and route distances
 
