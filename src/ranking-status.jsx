@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { RankingSymbol } from './ranking-symbol.jsx';
 
 function position(board, userId) {
   const me = board.rows.find(row => row.id === userId);
   return me?.checks > 0 ? 1 + board.rows.filter(row => row.checks > me.checks).length : null;
 }
-function symbol(rank) { return ({ 1: '🥇', 2: '🥈', 3: '🥉' })[rank] || '☆'; }
 
 export function RankingStatus({ user, onOpen }) {
   const [standing, setStanding] = useState(null), [notice, setNotice] = useState(null);
@@ -42,5 +42,5 @@ export function RankingStatus({ user, onOpen }) {
   }, [notice]);
   if (!standing) return null;
   const label = `Shipment Finisher ${standing.year} · ${standing.rank ? `Rank ${standing.rank}` : 'Not ranked yet'}`;
-  return <><button className="account-ranking" type="button" title={label} aria-label={label} onClick={onOpen}><span aria-hidden="true">{symbol(standing.rank)}</span>{standing.rank > 3 && <small>#{standing.rank}</small>}</button>{notice && <aside className="ranking-toast" role="status" aria-live="polite" aria-atomic="true"><span className="ranking-toast-symbol" aria-hidden="true">{symbol(notice.to)}</span><div><strong>{notice.to === null ? 'You are currently unranked' : notice.from === null ? `You are now ranked #${notice.to}!` : notice.to < notice.from ? `You moved up to #${notice.to}!` : `Your ranking changed to #${notice.to}`}</strong><p>Shipment Finisher · {standing.year}{notice.from !== null && notice.to !== null ? ` · #${notice.from} → #${notice.to}` : ''}</p></div><button type="button" aria-label="Dismiss ranking notification" onClick={() => setNotice(null)}>×</button></aside>}</>;
+  return <><button className="account-ranking" type="button" title={label} aria-label={label} onClick={onOpen}><span aria-hidden="true"><RankingSymbol rank={standing.rank}/></span>{standing.rank > 3 && <small>#{standing.rank}</small>}</button>{notice && <aside className="ranking-toast" role="status" aria-live="polite" aria-atomic="true"><span className="ranking-toast-symbol" aria-hidden="true"><RankingSymbol rank={notice.to}/></span><div><strong>{notice.to === null ? 'You are currently unranked' : notice.from === null ? `You are now ranked #${notice.to}!` : notice.to < notice.from ? `You moved up to #${notice.to}!` : `Your ranking changed to #${notice.to}`}</strong><p>Shipment Finisher · {standing.year}{notice.from !== null && notice.to !== null ? ` · #${notice.from} → #${notice.to}` : ''}</p></div><button type="button" aria-label="Dismiss ranking notification" onClick={() => setNotice(null)}>×</button></aside>}</>;
 }
