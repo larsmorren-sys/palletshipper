@@ -22,7 +22,7 @@ If you download a ZIP instead, extract it, open a terminal in the extracted proj
 
 Open the Vite address printed in the terminal, normally http://localhost:5173. The backend listens on port 3001. Keep `PORT=3001` in development: the included Vite proxy points to that port. An internet or local network connection is required; offline synchronization is not implemented.
 
-Both `npm run dev` and `npm start` load the optional `.env` file automatically. Already-set environment variables take precedence, including Railway Variables. Restart the application after changing `.env`. The example file contains no real credentials; keep your actual `.env` private.
+Both `npm run dev` and `npm start` load the optional `.env` file automatically through `server/env.js`. A missing file is silently skipped; Railway uses its Variables without needing a `.env` file. Already-set environment variables take precedence, including Railway Variables. Restart the application after changing `.env`. The example file contains no real credentials; keep your actual `.env` private.
 
 ### 2. Create your first administrator
 

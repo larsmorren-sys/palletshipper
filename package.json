@@ -4,10 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "node --env-file-if-exists=.env server/dev.js",
+    "dev": "node --import ./server/env.js server/dev.js",
     "build": "vite build",
-    "start": "node --env-file-if-exists=.env server/index.js",
-    "test": "node --test server/integration.test.js server/routing.test.js"
+    "start": "node --import ./server/env.js server/index.js",
+    "test": "node --test server/integration.test.js server/routing.test.js server/env.test.js"
   },
   "keywords": [],
   "author": "",
