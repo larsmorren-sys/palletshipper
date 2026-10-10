@@ -48,4 +48,8 @@
 
 .account-name-group .account-name{min-width:0}.account-name-group{display:flex;align-items:center;gap:2px;min-width:0}.account-ranking{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:44px;min-height:44px;padding:6px;border:0;border-radius:8px;background:transparent;color:#75836d;flex-shrink:0}.account-ranking>span{font-size:21px;line-height:1}.account-ranking>small{font-size:11px}.account-ranking:hover,.account-ranking:focus-visible{background:#eaf1eb;color:#254d3d}.ranking-toast{position:fixed;right:20px;top:90px;z-index:30;display:flex;align-items:center;gap:12px;width:370px;max-width:calc(100vw - 28px);padding:16px;background:#fff;border:1px solid #d4e1cf;border-radius:12px;box-shadow:0 8px 35px #18302126;color:#254d3d}.ranking-toast-symbol{font-size:30px;flex-shrink:0}.ranking-toast>div{min-width:0;flex:1}.ranking-toast strong{font-size:14px;overflow-wrap:anywhere}.ranking-toast p{margin:6px 0 0;font-size:11px;line-height:1.6;color:#75836d}.ranking-toast>button{width:36px;height:36px;flex-shrink:0;border:0;border-radius:6px;background:transparent;font-size:22px;color:#75836d}@media(max-width:650px){.account-name-group{margin-right:auto}.account-name-group .account-name{margin-right:0}.ranking-toast{top:auto;bottom:18px;right:14px}}
 
-.ranking-vehicle{display:inline-block;width:1.35em;height:1.35em;vertical-align:middle}
+.ranking-badge{display:inline-block;width:1.6em;height:1.6em;object-fit:contain;vertical-align:middle}
+.account-ranking .ranking-badge{width:34px;height:34px}
+.ranking-toast-symbol .ranking-badge{width:52px;height:52px}
+.challenge-medal .ranking-badge{width:96px;height:96px}
+@media(max-width:600px){.challenge-medal .ranking-badge{width:72px;height:72px}}
