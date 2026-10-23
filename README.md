@@ -6,7 +6,7 @@ A shipment and pallet management application built with React, Vite, Tailwind CS
 
 Each installation has its own database, users and optional route-service key. This repository contains application code only: it does not include the original installation's accounts, shipments, photos, API key or setup code. A fresh installation starts empty. You do not need a route-service account to use shipments, tracking, challenges or manually entered distances.
 
-You need **Node.js 24 or later**, npm (included with Node.js), and Git if you want to clone the repository. Check your version with `node --version`.
+You need **Node.js 24.22.1 or a newer patched Node.js 24 release**, npm (included with Node.js), and Git if you want to clone the repository. Check your version with `node --version`. The `.nvmrc` and `.node-version` files select 24.22.1; with nvm, run `nvm install` followed by `nvm use` before installing dependencies. The Railway Docker image is pinned to the same security release.
 
 ### 1. Download and start locally
 
