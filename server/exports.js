@@ -73,7 +73,7 @@ export function installExports(app, db, auth) {
     const shipment = auth.requireShipment(req.user, bulk ? req.params.id : pallet.shipmentId);
     const pallets = bulk ? db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(shipment.id) : [pallet];
     const source = bulk ? db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY rowid').all(shipment.id) : db.prepare('SELECT * FROM items WHERE palletId=? ORDER BY rowid').all(pallet.id);
-    const items = source.map(item => ({ ...item, displayName: `${item.name} ${item.instanceNumber}`, statuses: JSON.parse(item.statuses) })).sort((a,b) => collator.compare(a.displayName,b.displayName));
+    const items = source.map(item => ({ ...item, displayName: item.autoNumbered === 0 ? item.name : `${item.name} ${item.instanceNumber}`, extraFields: JSON.parse(item.extraFields || '[]'), statuses: JSON.parse(item.statuses) })).sort((a,b) => collator.compare(a.displayName,b.displayName));
     const groups = pallets.map(pallet => ({ ...pallet, items: items.filter(item => item.palletId === pallet.id) }));
     const unassigned = items.filter(item => !item.palletId);
     if (bulk && unassigned.length) groups.push({ id: null, name: 'Unassigned', items: unassigned });
@@ -96,8 +96,9 @@ export function installExports(app, db, auth) {
     }
     const columns = auth.getColumns(req.user.id, shipment.id);
     const tracking = stages.filter(([key]) => columns[key]);
-    const headers = ['Shipment', 'Pallet', 'Item', 'Item code', 'Quantity', 'Note', ...tracking.map(([,label]) => label)];
-    const groupRows = group => group.items.map(item => [shipment.name, group.name, item.displayName, item.code, 1, item.note, ...tracking.map(([key]) => formatDate(item.statuses[key]))]);
+    const extraLabels = [...new Set(items.flatMap(item=>item.extraFields.map(field=>field.label)))];
+    const headers = ['Shipment', 'Pallet', 'Item', 'Item code', 'Quantity', 'Note', ...extraLabels, ...tracking.map(([,label]) => label)];
+    const groupRows = group => group.items.map(item => [shipment.name, group.name, item.displayName, item.code, 1, item.note, ...extraLabels.map(label=>item.extraFields.find(field=>field.label===label)?.value || ''), ...tracking.map(([key]) => formatDate(item.statuses[key]))]);
     const rows = groups.flatMap(groupRows);
     if (format === 'print') {
       const table = group => `<table><thead><tr>${headers.slice(2).map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${groupRows(group).map(row => `<tr>${row.slice(2).map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -108,8 +109,9 @@ export function installExports(app, db, auth) {
     }
     if (!['csv','xlsx'].includes(format)) throw fail('Choose CSV, Excel, a packing list or an A6 label.');
     // Keep user text as text, including spreadsheet formula-like prefixes.
-    const safeRows = rows.map(row => row.map(value => typeof value === 'string' && /^[\s]*[=+@-]/.test(value) ? `'${value}` : value));
-    const sheet = XLSX.utils.aoa_to_sheet([headers, ...(format === 'csv' ? safeRows : rows)]);
+    const safeCell = value => typeof value === 'string' && /^[\s]*[=+@-]/.test(value) ? `'${value}` : value;
+    const safeRows = rows.map(row => row.map(safeCell));
+    const sheet = XLSX.utils.aoa_to_sheet([format === 'csv' ? headers.map(safeCell) : headers, ...(format === 'csv' ? safeRows : rows)]);
     const base = filename(bulk ? shipment.name : `${shipment.name}-${pallet.name}`);
     res.set('Content-Disposition', `attachment; filename="${base}.${format}"`);
     if (format === 'csv') res.type('text/csv').send('\uFEFF' + XLSX.utils.sheet_to_csv(sheet, { FS: ';' }));

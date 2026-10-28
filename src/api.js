@@ -8,7 +8,8 @@ export async function api(url, options = {}) {
     if (response.status === 401 && !url.startsWith('/api/auth/')) window.dispatchEvent(new Event('session-expired'));
     throw Object.assign(new Error(data.error || 'The request failed.'), { status: response.status });
   }
-  if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase()) && /^\/api\/(pallets\/|shipments\/|challenges\/settings|auth\/profile|users\/)/.test(url)) window.dispatchEvent(new Event('challenge-scores-changed'));
+  if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase()) && /^\/api\/(items\/|pallets\/|shipments\/|challenges\/settings|auth\/profile|users\/)/.test(url)) window.dispatchEvent(new Event('challenge-scores-changed'));
+  if (options.method && !['GET','HEAD'].includes(options.method.toUpperCase())) window.dispatchEvent(new CustomEvent('shipment-data-changed',{detail:{label:data.historyAction}}));
   if ('csrfToken' in data) csrfToken = data.csrfToken;
   return data;
 }

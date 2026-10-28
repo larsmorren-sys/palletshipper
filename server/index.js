@@ -11,6 +11,7 @@ import XLSX from 'xlsx';
 import { extractPdfRows } from './pdf-import.js';
 import { nextPalletNumber, palletName, objectNameKey } from '../shared/numbering.js';
 import { installAuth } from './auth.js';
+import { installEditing, extraFields } from './editing.js';
 import { archiveShipment } from './archive-photos.js';
 import { installExports } from './exports.js';
 import { installChallenges } from './challenges.js';
@@ -80,11 +81,12 @@ const challenges = installChallenges(app, db, auth);
 installExports(app, db, auth);
 const requireShipment = auth.requireShipment;
 const requirePallet = (id, shipmentId) => { if (!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id, shipmentId)) throw fail('This pallet does not belong to this shipment.'); };
-const itemView = row => ({ ...row, revision: revision(row), displayName: `${row.name} ${row.instanceNumber}`, statuses: JSON.parse(row.statuses) });
+const itemView = row => ({ ...row, revision: revision(row), displayName: row.autoNumbered === 0 ? row.name : `${row.name} ${row.instanceNumber}`, extraFields: JSON.parse(row.extraFields || '[]'), statuses: JSON.parse(row.statuses) });
 // Keep a high-water mark so removing an object never reuses its number.
 db.exec('CREATE TABLE IF NOT EXISTS item_sequences (shipmentId TEXT NOT NULL REFERENCES shipments(id), nameKey TEXT NOT NULL, lastNumber INTEGER NOT NULL, PRIMARY KEY(shipmentId, nameKey))');
 const reserveNumber = db.prepare('INSERT INTO item_sequences VALUES (?, ?, ?) ON CONFLICT(shipmentId,nameKey) DO UPDATE SET lastNumber=MAX(lastNumber,excluded.lastNumber)');
 for (const item of db.prepare('SELECT shipmentId, name, instanceNumber FROM items').all()) reserveNumber.run(item.shipmentId, objectNameKey(item.name), item.instanceNumber);
+const editor = installEditing(app, db, auth, dataDir, palletView, itemView);
 app.get('/api/health', (_, res) => res.json({ ok: true }));
 app.get('/api/shipments', (req, res) => {
   const rows = req.user.role === 'admin' ? db.prepare('SELECT * FROM shipments ORDER BY createdAt DESC').all() : db.prepare('SELECT * FROM shipments s WHERE s.ownerId=? OR EXISTS (SELECT 1 FROM shipment_access a WHERE a.shipmentId=s.id AND a.userId=?) ORDER BY createdAt DESC').all(req.user.id, req.user.id);
@@ -130,7 +132,7 @@ app.patch('/api/shipments/:id', async (req, res) => {
   if ('archived' in req.body && typeof req.body.archived !== 'boolean') throw fail('Invalid archive status.');
   if (req.body.archived) {
     archiving.add(req.params.id);
-    try { await archiveShipment(db, dataDir, req.params.id); }
+    try { await archiveShipment(db, dataDir, req.params.id); editor.purge(req.params.id); }
     catch { throw fail('Archiving failed: a photo could not be processed. The shipment and original photos have been preserved.'); }
     finally { archiving.delete(req.params.id); }
   } else if ('archived' in req.body) db.prepare('UPDATE shipments SET archivedAt=NULL WHERE id=?').run(req.params.id);
@@ -141,6 +143,7 @@ app.delete('/api/shipments/:id', (req, res) => {
   const shipment = requireShipment(req.user, req.params.id, true);
   checkRevision(req.body, revision(shipment));
   if (req.body.confirmName !== shipment.name) throw fail('Type the shipment name to confirm deletion.');
+  editor.purge(shipment.id);
   const photos = db.prepare('SELECT url FROM pallet_photos WHERE palletId IN (SELECT id FROM pallets WHERE shipmentId=?)').all(shipment.id);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -157,7 +160,7 @@ app.delete('/api/shipments/:id', (req, res) => {
 });
 app.get('/api/shipments/:id', (req, res) => {
   requireShipment(req.user, req.params.id);
-  res.json({ hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(itemView) });
+  res.json({ hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY createdOrder').all(req.params.id).map(itemView), lastImported: editor.recent(req.params.id), deletedItems: editor.deleted(req.params.id) });
 });
 app.post('/api/shipments/:id/pallets', (req, res) => {
   requireShipment(req.user, req.params.id);
@@ -169,7 +172,7 @@ app.post('/api/shipments/:id/pallets', (req, res) => {
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw fail('Choose a whole quantity from 1 to 200 pallets.');
   if (name && quantity > 1) throw fail('Multiple pallets are named automatically. Leave the name blank.');
   const pallets = [];
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT mutation');
   try {
     const existing = db.prepare('SELECT name FROM pallets WHERE shipmentId=?').all(req.params.id);
     if (name && existing.some(pallet => objectNameKey(pallet.name) === objectNameKey(name))) throw fail('A pallet with this name already exists.');
@@ -180,8 +183,9 @@ app.post('/api/shipments/:id/pallets', (req, res) => {
       if (existing.some(p => objectNameKey(p.name) === objectNameKey(pallet.name))) throw fail('A pallet with this name already exists.');
       insert.run(pallet.id, pallet.shipmentId, pallet.name); pallets.push(pallet);
     }
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    db.exec('RELEASE mutation');
+  } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
+  req.editLabel = `Add ${pallets.length} pallet${pallets.length===1?'':'s'}`;
   res.status(201).json({ id: pallets[0].id, added: pallets.length, pallets });
 });
 app.patch('/api/pallets/:id', (req, res) => {
@@ -201,12 +205,13 @@ app.patch('/api/pallets/:id', (req, res) => {
     if (!['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse'].includes(req.body.status) || typeof req.body.checked !== 'boolean') throw fail('Invalid status.');
     statuses[req.body.status] = req.body.checked ? (statuses[req.body.status] || new Date().toISOString()) : null;
   }
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT mutation');
   try {
     if ('status' in req.body) challenges.record(pallet, req.body.status, req.body.checked, req.user.id, statuses[req.body.status]);
     db.prepare('UPDATE pallets SET name=?, statuses=? WHERE id=?').run(name, JSON.stringify(statuses), pallet.id);
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    db.exec('RELEASE mutation');
+  } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
+  req.editLabel = `${'name' in req.body ? 'Rename' : 'Update tracking for'} ${pallet.name}`;
   res.json(palletView(db.prepare('SELECT * FROM pallets WHERE id=?').get(pallet.id)));
 });
 app.delete('/api/pallets/:id', (req, res) => {
@@ -214,18 +219,14 @@ app.delete('/api/pallets/:id', (req, res) => {
   if (!pallet) throw fail('Pallet not found.', 404);
   requireShipment(req.user, pallet.shipmentId);
   checkRevision(req.body, palletView(pallet).revision);
-  const photos = db.prepare('SELECT url FROM pallet_photos WHERE palletId=?').all(pallet.id);
-  db.exec('BEGIN IMMEDIATE');
+  req.editLabel = `Delete ${pallet.name}`;
+  db.exec('SAVEPOINT mutation');
   try {
     db.prepare('UPDATE items SET palletId=NULL WHERE palletId=?').run(pallet.id);
     db.prepare('DELETE FROM pallet_photos WHERE palletId=?').run(pallet.id);
     db.prepare('DELETE FROM pallets WHERE id=?').run(pallet.id);
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-  for (const photo of photos) {
-    try { unlinkSync(path.join(dataDir, 'uploads', path.basename(photo.url))); }
-    catch (error) { if (error.code !== 'ENOENT') console.error('Failed to clean up pallet photo:', error.code); }
-  }
+    db.exec('RELEASE mutation');
+  } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
   res.json({ ok: true });
 });
 app.post('/api/shipments/:id/items', (req, res) => {
@@ -238,22 +239,23 @@ app.post('/api/shipments/:id/items', (req, res) => {
     if (!name || !Number.isInteger(quantity) || quantity < 1 || quantity > 2000) throw fail('Each row needs a description and a whole quantity from 1 to 2000.');
     if (palletId) requirePallet(palletId, req.params.id);
     total += quantity;
-    return { name, code, note, quantity, palletId };
+    return { name, code, note, quantity, palletId, extraFields: extraFields(row.extraFields || []) };
   });
   if (total > 2000) throw fail('Add no more than 2000 items at a time.');
-  db.exec('BEGIN');
+  db.exec('SAVEPOINT mutation');
   try {
     const numbers = new Map();
     for (const row of db.prepare('SELECT nameKey, lastNumber FROM item_sequences WHERE shipmentId=?').all(req.params.id)) numbers.set(row.nameKey, row.lastNumber);
-    const insert = db.prepare('INSERT INTO items (id, shipmentId, palletId, name, code, note, statuses, instanceNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const insert = db.prepare('INSERT INTO items (id, shipmentId, palletId, name, code, note, statuses, instanceNumber, autoNumbered, extraFields, createdOrder, imported) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const row of prepared) for (let i = 0; i < row.quantity; i++) {
       const key = objectNameKey(row.name), number = (numbers.get(key) || 0) + 1;
       numbers.set(key, number);
       reserveNumber.run(req.params.id, key, number);
-      insert.run(randomUUID(), req.params.id, row.palletId, row.name, row.code, row.note, '{}', number);
+      insert.run(randomUUID(), req.params.id, row.palletId, row.name, row.code, row.note, '{}', number, Number(row.quantity > 1), JSON.stringify(row.extraFields), editor.stamp(), Number(req.body.source === 'import'));
     }
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    db.exec('RELEASE mutation');
+  } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
+  req.editLabel = `${req.body.source === 'import' ? 'Import' : 'Add'} ${total} item${total===1?'':'s'}`;
   res.status(201).json({ added: total });
 });
 app.patch('/api/items/:id', (req, res) => {
@@ -275,6 +277,7 @@ app.patch('/api/items/:id', (req, res) => {
     if (palletId) requirePallet(palletId, item.shipmentId);
     updated.palletId = palletId;
   }
+  if ('extraFields' in req.body) updated.extraFields = JSON.stringify(extraFields(req.body.extraFields));
   if ('status' in req.body) {
     const statuses = JSON.parse(item.statuses);
     statuses[req.body.status] = req.body.checked ? new Date().toISOString() : null;
@@ -284,12 +287,13 @@ app.patch('/api/items/:id', (req, res) => {
     const last = db.prepare('SELECT lastNumber FROM item_sequences WHERE shipmentId=? AND nameKey=?').get(item.shipmentId, objectNameKey(updated.name))?.lastNumber || 0;
     if (updated.instanceNumber <= last) updated.instanceNumber = last + 1;
   }
-  db.exec('BEGIN');
+  db.exec('SAVEPOINT mutation');
   try {
     reserveNumber.run(item.shipmentId, objectNameKey(updated.name), updated.instanceNumber);
-    db.prepare('UPDATE items SET name=?, code=?, note=?, palletId=?, statuses=?, instanceNumber=? WHERE id=?').run(updated.name, updated.code, updated.note, updated.palletId, updated.statuses, updated.instanceNumber, item.id);
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    db.prepare('UPDATE items SET name=?, code=?, note=?, palletId=?, statuses=?, instanceNumber=?, extraFields=? WHERE id=?').run(updated.name, updated.code, updated.note, updated.palletId, updated.statuses, updated.instanceNumber, updated.extraFields, item.id);
+    db.exec('RELEASE mutation');
+  } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
+  req.editLabel = `${'palletId' in req.body ? 'Move' : 'status' in req.body ? 'Update tracking for' : 'Edit'} ${itemView(item).displayName}`;
   res.json(itemView(db.prepare('SELECT * FROM items WHERE id=?').get(item.id)));
 });
 app.delete('/api/items/:id', (req, res) => {
@@ -297,6 +301,8 @@ app.delete('/api/items/:id', (req, res) => {
   if (!item) throw fail('Item not found.', 404);
   requireShipment(req.user, item.shipmentId);
   checkRevision(req.body, revision(item));
+  req.editLabel = `Delete ${itemView(item).displayName}`;
+  editor.trash(item, req.user.id);
   db.prepare('DELETE FROM items WHERE id=?').run(item.id);
   res.json({ ok: true });
 });

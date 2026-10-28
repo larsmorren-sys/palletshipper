@@ -113,17 +113,36 @@ The browser remembers the last opened shipment per account, including archived s
 
 Add 1 to 200 pallets at a time. Customize the **Prefix** and **Postfix** around the automatic number, for example `Stage 1 London`. A preview shows the first and last names. Numbers continue for the same prefix/postfix combination within a shipment. The default prefix is `Pallet`; empty prefix and postfix fields produce numeric names.
 
-Each item gets a stable number after its description, for example `LED screen 1`. Numbering continues per description across manual additions and imports. Moving an item does not change its number; deleting an item does not reuse its number. Existing records are migrated automatically.
+When an input row has a quantity above 1, its individual items receive stable numbers, for example `LED screen 1` and `LED screen 2`. Quantity 1 keeps the exact name without adding a suffix. Previously numbered items keep their existing names. Numbers remain reserved across deletion, duplication and undo; moving or restoring an item does not renumber it.
 
 You can edit or delete items, assign them to pallets, search by name, number, code or note, and sort by name or order added. Renaming preserves tracking; if a number conflicts under the new description, the next available number is assigned.
 
-Use **Pallet overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved; the pallet’s photos and pallet tracking are permanently deleted.
+Use **Pallet overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires or the shipment is archived/deleted.
+
+## Edit mode, recent items and undo
+
+Use **Edit mode** in either Items or Pallet overview. Edit item names, codes, notes and extra field values directly in the existing rows; pallet names are editable in Pallet overview. Each changed row has **Save** and **Cancel**. Save or cancel drafts before leaving the view or starting another operation. Selection checkboxes and **Select all visible** apply to the current search/filter, not hidden rows.
+
+Select items to **Move to pallet…** or **Delete selected**. The destination picker supports searching and scrolling, including hundreds of pallets. On desktop or tablet, drag the grip beside an item onto a highlighted pallet in the sidebar or destination panel. Dragging a selected row moves the visible selection; dragging another row moves that row. Grips support touch without preventing normal page scrolling elsewhere; the page and destination lists scroll near their edges. Tap **Move to pallet…** as an alternative to dragging. Escape cancels a drag. Use the sidebar's pallet search to find destinations quickly.
+
+In Pallet overview, selected pallets can be deleted together or have their contents moved to a destination pallet. **Move contents** preserves the source pallets, their photos and independent tracking. Pallets themselves are not nested. Deleting selected pallets moves their items to Unassigned. Bulk operations validate all row revisions and pallet contents before changing anything.
+
+**Duplicate** copies an item's description, code, note, extra columns and pallet assignment. The copy is a single unnumbered item with new identity and empty tracking; the original remains unchanged.
+
+The sidebar includes:
+
+- **Last imported**: the latest 200 currently present imported items, newest first. This starts recording with imports made after this upgrade; old records have no reliable import provenance. Manual additions and duplicates do not appear here. Restoring an item retains its original import order.
+- **Last deleted**: up to 200 deleted items per shipment, newest first. Restore one or select multiple to recover their identities, tracking and extra columns. If the original pallet no longer exists, restored items go to Unassigned. This list is shared by users with shipment access.
+
+**Undo** and **Redo** show the next action's name and a confirmation after applying it. Each user has their own persistent history of up to 50 item/pallet actions per shipment, including additions/imports, edits, moves, tracking, duplication, deletion and restoration. A bulk operation is one action. A new action clears that user's redo branch. Undo never reuses reserved item numbers and rejects changes if another action has modified affected records or added dependent content. This prevents overwriting colleagues' work. Photo uploads/deletions, logo/account/access/settings changes and shipment deletion/archiving are not undoable. This limited history is not a complete audit log.
+
+**Successful archiving permanently clears the shipment's recycle bin and every user's undo/redo history.** A failed archive preserves them. Restoring a shipment does not bring the bin or history back. Archived shipments do not retain deleted items or new undo actions; deleting from an archive requires explicit permanent-deletion confirmation. The UI also checks for archive-state changes during editing; restore the shipment before making recoverable edits.
 
 ## Import equipment
 
 Import CSV, Excel (`.xlsx` or `.xls`) or a text-based PDF. The first Excel worksheet is used. PDF import recognizes positioned columns, headers, repeated headings, empty cells and wrapped descriptions where possible. Scanned PDFs are not supported; use CSV or Excel for those documents. Familiar source-language column aliases remain supported for existing material lists.
 
-Review column mapping, headers, descriptions and quantities before importing. Fully empty rows are skipped. Invalid rows are identified with a message. Select **Always 1** when the document has no suitable quantity column. Imports are limited to 2,000 items per request.
+Review column mapping, headers, descriptions and quantities before importing. Fully empty rows are skipped. Invalid rows are identified with a message. Select **Always 1** when the document has no suitable quantity column. Imports are limited to 2,000 items per request. Use **Add column** to map additional source columns or create a manually entered column. Give each extra column a name and review its values. Up to 12 extra columns per item are stored, shown below the item beside its code, editable in Edit mode, and included in CSV/Excel/packing-list exports.
 
 ## Tracking and pallet loading
 
@@ -172,7 +191,7 @@ Permanent shipment deletion requires typing its exact name. It removes pallets, 
 
 ## Collaboration
 
-The active shipment refreshes every five seconds and when returning to the window. Refresh pauses during forms and local changes. Item, pallet and shipment edits and deletions send their read version: stale operations are rejected and the current data is retrieved. Close and reopen the form to continue after a conflict. API clients must send `revision` to enable this check. Pallet checks record the original user and timestamp for challenge credit. A full change audit log and item-check attribution are not implemented.
+The active shipment refreshes every five seconds and when returning to the window. Refresh pauses during forms, local changes and Edit mode to protect drafts. Leaving Edit mode reloads the current data. Item, pallet and shipment edits and deletions send their read version: stale operations are rejected and the current data is retrieved. Review the latest data and try again after a conflict. API clients must send `revision` to enable this check. Pallet checks record the original user and timestamp for challenge credit. A full change audit log and item-check attribution are not implemented.
 
 ## Deploy on Railway
 
@@ -195,7 +214,7 @@ npm run build
 npm test
 ```
 
-Tests cover migrations, authentication, permissions, imports, tracking, photos, exports, conflicts, reusable logos, challenge attribution, score corrections, calendar periods, route validation and provider failure handling. Route-provider tests use mock responses and do not require a real API key. Browser checks are used during development for tablet layouts and interactive workflows.
+Tests cover migrations, authentication, permissions, imports and extra columns, independent tracking, photos, exports, atomic bulk edits, persistent recycle bins, undo/redo conflicts, reusable logos, challenge attribution, score corrections, calendar periods, route validation and provider failure handling. Route-provider tests use mock responses and do not require a real API key. Browser checks are used during development for tablet layouts and interactive workflows.
 
 ## Transport Challenge and route distances
 

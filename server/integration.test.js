@@ -172,7 +172,7 @@ test('Item numbering continues per name across additions, imports and pallet cha
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'LED-scherm', quantity: 2 }, { name: 'Kabel', quantity: 1 }] });
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'LED-scherm', quantity: 1 }, { name: 'LED-scherm', quantity: 2 }, { name: 'Kabel', quantity: 1 }] });
   const data = (await request(endpoint)).data;
-  assert.deepEqual(data.items.map(i => i.displayName), ['LED-scherm 1', 'LED-scherm 2', 'Kabel 1', 'LED-scherm 3', 'LED-scherm 4', 'LED-scherm 5', 'Kabel 2']);
+  assert.deepEqual(data.items.map(i => i.displayName), ['LED-scherm 1', 'LED-scherm 2', 'Kabel', 'LED-scherm', 'LED-scherm 4', 'LED-scherm 5', 'Kabel']);
   assert.equal(data.items[0].name, 'LED-scherm');
   const pallet = (await request(`${endpoint}/pallets`, 'POST', { quantity: 1 })).data;
   assert.equal((await request(`/items/${data.items[0].id}`, 'PATCH', { palletId: pallet.id })).data.displayName, 'LED-scherm 1');
@@ -182,7 +182,7 @@ test('Item numbering continues per name across additions, imports and pallet cha
   assert.equal((await request(endpoint)).data.items.at(-1).instanceNumber, 6);
   const other = (await request('/shipments', 'POST', { name: 'Andere objectnummering' })).data;
   await request(`/shipments/${other.id}/items`, 'POST', { rows: [{ name: 'LED-scherm' }] });
-  assert.equal((await request(`/shipments/${other.id}`)).data.items[0].displayName, 'LED-scherm 1');
+  assert.equal((await request(`/shipments/${other.id}`)).data.items[0].displayName, 'LED-scherm');
 });
 test('Existing items receive stable numbers without losing tracking or assignment', async () => {
   let data = (await request('/shipments/legacy')).data;
@@ -191,7 +191,7 @@ test('Existing items receive stable numbers without losing tracking or assignmen
   assert.equal(data.items[0].statuses.outWarehouse, '2026-10-05T12:00:00Z');
   assert.equal(data.items[0].note, 'Bestaand object');
   await request('/shipments/legacy/items', 'POST', { rows: [{ name: 'Lamp', quantity: 1 }] });
-  assert.equal((await request('/shipments/legacy')).data.items.at(-1).displayName, 'Lamp 3');
+  assert.equal((await request('/shipments/legacy')).data.items.at(-1).displayName, 'Lamp');
   const pallets = (await request('/shipments/legacy/pallets', 'POST', { quantity: 2 })).data;
   assert.deepEqual(pallets.pallets.map(p => p.name), ['Pallet 5', 'Pallet 6']);
 });
@@ -352,7 +352,8 @@ test('Deleting items never reuses their numbers, including after a restart', asy
   for (const item of items) await request(`/items/${item.id}`, 'DELETE');
   await stop(); await start();
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'Lamp' }] });
-  assert.equal((await request(endpoint)).data.items[0].displayName, 'Lamp 3');
+  assert.equal((await request(endpoint)).data.items[0].displayName, 'Lamp');
+  assert.equal((await request(endpoint)).data.items[0].instanceNumber,3);
 });
 test('Multiple pallet photos are preserved and deletion removes only the selected file', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Fotogalerij' })).data;
@@ -433,7 +434,7 @@ test('Whole shipment exports include every pallet list and one A6 label per pall
   assert.equal(book.SheetNames.length, 5); assert.equal(book.SheetNames[0], 'Overview'); assert.ok(book.SheetNames.includes('Unassigned'));
   const first = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[1]], { header: 1 }); assert.equal(first.length, 3); assert.equal(first[1][1], 'Pallet 1');
   const empty = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[3]], { header: 1 }); assert.equal(empty.length, 1);
-  const csv = await (await get('csv')).text(); assert.ok(csv.includes('Lamp 2')); assert.ok(csv.includes('Kabel 1')); assert.ok(csv.includes('Unassigned')); assert.ok(csv.includes('Los object 1'));
+  const csv = await (await get('csv')).text(); assert.ok(csv.includes('Lamp 2')); assert.ok(csv.includes('Kabel')); assert.ok(csv.includes('Unassigned')); assert.ok(csv.includes('Los object'));
   const label = await (await get('label')).text(); assert.equal((label.match(/class="label"/g) || []).length, 3); assert.ok(label.includes('break-after:page')); assert.ok(label.includes('Pallet 3')); assert.ok(!label.includes('Los object'));
   const print = await (await get('print')).text(); assert.equal((print.match(/class="packing-list"/g) || []).length, 4); assert.ok(print.includes('Pallet 3')); assert.ok(print.includes('Unassigned')); assert.ok(print.includes('break-before:page'));
   const stranger = await createMember('bulk-export-stranger@example.test'); assert.equal((await get('xlsx', stranger.session)).status, 404); assert.equal((await get('label', null)).status, 401);
@@ -590,7 +591,7 @@ test('Pallet columns are independent per user and shipment and preserve tracking
   assert.deepEqual((await request(`/shipments/${shipment.id}`)).data.palletColumns, columns);
 });
 
-test('Renaming and deleting pallets preserve items and tracking and remove photo files', async () => {
+test('Renaming and deleting pallets preserve items and retain photos for undo', async () => {
   const shipment = (await request('/shipments', 'POST', { name: 'Palletbeheer' })).data;
   const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
   await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Kist', palletId: pallets[0].id }] });
@@ -610,7 +611,7 @@ test('Renaming and deleting pallets preserve items and tracking and remove photo
   assert.equal((await request(`/pallets/${pallets[0].id}`, 'DELETE')).status, 200);
   data = (await request(`/shipments/${shipment.id}`)).data;
   assert.deepEqual(data.items[0], { ...before.items[0], palletId: null, revision: data.items[0].revision }); assert.equal(data.pallets.length, 1);
-  assert.equal(existsSync(path.join(dir, 'uploads', path.basename(before.pallets[0].photos[0].url))), false);
+  assert.equal(existsSync(path.join(dir, 'uploads', path.basename(before.pallets[0].photos[0].url))), true);
   assert.equal((await request(`/pallets/${pallets[0].id}`, 'DELETE')).status, 404);
   await stop(); await start(); assert.equal((await request(`/shipments/${shipment.id}`)).data.items[0].palletId, null);
 });
@@ -790,7 +791,7 @@ test('Pallet challenges attribute checks once, share tied leg distances and reca
   await request(`/shipments/${shipment.id}`,'PATCH',{archived:true},a.session);assert.equal(score(await board(a.session),a.user.id).palletKm,300);
   await request('/challenges/settings','PUT',{shared:true});let publicBoard=await board(outsider.session);assert.ok(publicBoard.rows.some(r=>r.id===a.user.id));assert.equal(publicBoard.transports.length,0);
   await request('/challenges/settings','PUT',{shared:false});
-  await request(`/pallets/${pallets[0].id}`,'DELETE',{},a.session);scores=await board(a.session);assert.equal(score(scores,b.user.id).palletKm,0);assert.equal(score(scores,a.user.id).palletKm,200);
+  await request(`/pallets/${pallets[0].id}`,'DELETE',{permanent:true},a.session);scores=await board(a.session);assert.equal(score(scores,b.user.id).palletKm,0);assert.equal(score(scores,a.user.id).palletKm,200);
   await request(`/shipments/${shipment.id}`,'DELETE',{confirmName:shipment.name},a.session);assert.equal(score(await board(a.session),a.user.id).checks,0);
 });
 
@@ -893,4 +894,133 @@ test('Confirmed default warehouse is reused for new shipments and invalidated wh
   assert.equal(other.data.distanceSource,null);
   assert.equal((await request('/challenges/settings','PUT',{warehouseAddress:'Changed warehouse'})).status,200);
   assert.equal((await request('/challenges/settings')).data.warehouseCoordinates,null);
+});
+
+async function editFixture(name='Editing') {
+  const shipment=(await request('/shipments','POST',{name})).data;
+  const endpoint=`/shipments/${shipment.id}`;
+  const {pallets}=(await request(`${endpoint}/pallets`,'POST',{quantity:3})).data;
+  return {shipment,endpoint,pallets,detail:async()=>(await request(endpoint)).data};
+}
+const entries=rows=>rows.map(({id,revision})=>({id,revision}));
+async function historyAction(endpoint,direction='undo',session=adminSession) {
+  const state=(await request(`${endpoint}/history`,'GET',undefined,session)).data;
+  return request(`${endpoint}/history/${direction}`,'POST',{actionId:state[direction]?.id},session);
+}
+test('Single names stay unnumbered, custom import columns survive duplicates, edits, deletion and restore',async()=>{
+  const {endpoint,pallets,detail}=await editFixture();
+  const fields=[{label:'Weight',value:'12 kg'},{label:'Department',value:'Lighting'}];
+  assert.equal((await request(`${endpoint}/items`,'POST',{source:'import',rows:[{name:'Cable 19',quantity:1,extraFields:fields,palletId:pallets[0].id},{name:'Fixture',quantity:2}]})).status,201);
+  let data=await detail();assert.deepEqual(data.items.map(i=>i.displayName),['Cable 19','Fixture 1','Fixture 2']);assert.deepEqual(data.lastImported.map(i=>i.displayName),['Fixture 2','Fixture 1','Cable 19']);
+  const original=data.items[0];
+  const tracked=(await request(`/items/${original.id}`,'PATCH',{status:'inLocation',checked:true,revision:original.revision})).data;
+  const copy=await request(`/items/${original.id}/duplicate`,'POST',{revision:tracked.revision});assert.equal(copy.status,201);assert.deepEqual(copy.data.statuses,{});assert.deepEqual(copy.data.extraFields,fields);assert.equal(copy.data.displayName,'Cable 19');
+  const edited=(await request(`/items/${original.id}`,'PATCH',{extraFields:[{label:'Weight',value:'14 kg'}],revision:tracked.revision})).data;
+  assert.equal((await request(`/items/${original.id}`,'DELETE',{revision:edited.revision})).status,200);
+  data=await detail();assert.equal(data.deletedItems.length,1);assert.deepEqual(data.deletedItems[0].statuses,tracked.statuses);assert.equal(data.lastImported.some(i=>i.id===original.id),false);
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries(data.deletedItems)})).status,200);
+  data=await detail();const restored=data.items.find(i=>i.id===original.id);assert.equal(restored.palletId,pallets[0].id);assert.deepEqual(restored.statuses,tracked.statuses);assert.equal(restored.extraFields[0].value,'14 kg');assert.equal(restored.createdOrder,original.createdOrder);
+  const csv=await fetch(`http://127.0.0.1:${port}/api${endpoint}/export?format=csv`,{headers:{Cookie:adminSession.cookie}});assert.match(await csv.text(),/Weight/);
+});
+test('Bulk item changes are atomic, permission checked and support conflict-safe per-user undo and redo',async()=>{
+  const {endpoint,pallets,detail,shipment}=await editFixture('Bulk and history');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Group',quantity:3}]});
+  let data=await detail(),before=entries(data.items);
+  const outsider=await createMember('bulk-outsider@example.test');
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'assign',entries:before,palletId:pallets[0].id},outsider.session)).status,404);
+  await request(`/items/${data.items[1].id}`,'PATCH',{note:'Colleague edit',revision:data.items[1].revision});
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'assign',entries:before,palletId:pallets[0].id})).status,409);
+  data=await detail();assert.ok(data.items.every(i=>i.palletId===null));assert.equal(data.items[1].note,'Colleague edit');
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'assign',entries:entries(data.items),palletId:pallets[0].id})).status,200);
+  assert.equal((await historyAction(endpoint)).status,200);assert.ok((await detail()).items.every(i=>i.palletId===null));
+  assert.equal((await historyAction(endpoint,'redo')).status,200);assert.ok((await detail()).items.every(i=>i.palletId===pallets[0].id));
+  const user=await createMember('history-colleague@example.test');await request(`${endpoint}/access`,'PUT',{userIds:[user.user.id]});
+  const row=(await detail()).items[0];await request(`/items/${row.id}`,'PATCH',{name:'Changed by someone else',revision:row.revision},user.session);
+  assert.equal((await historyAction(endpoint)).status,409);assert.equal((await detail()).items[0].name,'Changed by someone else');
+  assert.equal((await historyAction(endpoint,'undo',user.session)).status,200);
+  assert.equal((await historyAction(endpoint)).status,200);
+  const state=(await request(`${endpoint}/history`)).data;assert.ok(state.redo);
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'New branch'}]});assert.equal((await request(`${endpoint}/history`)).data.redo,null);
+  assert.equal((await request(`${endpoint}/history/undo`,'POST',{actionId:state.redo.id})).status,409);
+});
+test('Deleted items are limited to 200, restore falls back to Unassigned, and successful archive clears bin and history',async()=>{
+  const {endpoint,pallets,detail,shipment}=await editFixture('Recycle bin');
+  await request(`${endpoint}/items`,'POST',{source:'import',rows:[{name:'Bulk',quantity:205,palletId:pallets[0].id}]});
+  let data=await detail();assert.equal(data.lastImported.length,200);assert.equal(data.lastImported[0].instanceNumber,205);
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'delete',entries:entries(data.items)})).status,200);
+  data=await detail();assert.equal(data.deletedItems.length,200);assert.equal(data.items.length,0);
+  await request(`/pallets/${pallets[0].id}`,'DELETE');
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries(data.deletedItems.slice(0,1))})).status,200);
+  data=await detail();assert.equal(data.items[0].palletId,null);assert.equal(data.lastImported.length,1);
+  await stop();await start();assert.equal((await detail()).deletedItems.length,199);assert.ok((await request(`${endpoint}/history`)).data.undo);
+  assert.equal((await request(endpoint,'PATCH',{archived:true})).status,200);
+  assert.equal((await detail()).deletedItems.length,0);assert.equal((await request(`${endpoint}/history`)).data.undo,null);
+  assert.equal((await request(endpoint,'PATCH',{archived:false})).status,200);assert.equal((await detail()).deletedItems.length,0);
+});
+test('Bulk pallet deletion and history restore contents, photos and independent challenge attribution',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('Pallet history');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Cargo',quantity:2,palletId:pallets[0].id}]});
+  const file=new FormData();file.append('files',new Blob([pngSample]),'undo.png');await request(`/pallets/${pallets[0].id}/photos`,'POST',file);
+  await request(`/pallets/${pallets[0].id}`,'PATCH',{status:'inLocation',checked:true});
+  const before=await detail();
+  assert.equal((await request(`${endpoint}/pallets/bulk`,'POST',{operation:'delete',entries:entries(before.pallets.slice(0,2)),items:entries(before.items)})).status,200);
+  assert.equal((await detail()).pallets.length,1);assert.ok((await detail()).items.every(i=>i.palletId===null));
+  assert.equal((await historyAction(endpoint)).status,200);
+  let data=await detail();assert.equal(data.pallets.length,3);assert.deepEqual(data.pallets.find(p=>p.id===pallets[0].id).photos,before.pallets[0].photos);assert.deepEqual(data.pallets.find(p=>p.id===pallets[0].id).statuses,before.pallets[0].statuses);assert.ok(data.items.every(i=>i.palletId===pallets[0].id));
+  assert.equal((await historyAction(endpoint,'redo')).status,200);
+  assert.equal((await detail()).pallets.length,1);
+  const photoPath=path.join(dir,'uploads',path.basename(before.pallets[0].photos[0].url));assert.equal(existsSync(photoPath),true);
+  await request(endpoint,'PATCH',{archived:true});assert.equal(existsSync(photoPath),false);
+});
+test('Moving pallet contents preserves source pallets and checks item revisions before any changes',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('Pallet moves');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Cargo',palletId:pallets[0].id}]});
+  let data=await detail();const body={operation:'assign',entries:entries(data.pallets.slice(0,1)),items:entries(data.items),palletId:pallets[2].id};
+  await request(`/items/${data.items[0].id}`,'PATCH',{note:'Concurrent edit'});
+  assert.equal((await request(`${endpoint}/pallets/bulk`,'POST',body)).status,409);assert.equal((await detail()).items[0].palletId,pallets[0].id);
+  data=await detail();assert.equal((await request(`${endpoint}/pallets/bulk`,'POST',{...body,items:entries(data.items)})).status,200);
+  data=await detail();assert.equal(data.pallets.length,3);assert.equal(data.items[0].palletId,pallets[2].id);
+  assert.equal((await historyAction(endpoint)).status,200);assert.equal((await detail()).items[0].palletId,pallets[0].id);
+});
+
+test('A failed archive preserves the recycle bin and undo history',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('Failed archive history');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Preserved'}]});
+  const item=(await detail()).items[0];await request(`/items/${item.id}`,'DELETE',{revision:item.revision});
+  const file=new FormData();file.append('files',new Blob([Buffer.from([137,80,78,71,13,10,26,10])]),'broken.png');
+  assert.equal((await request(`/pallets/${pallets[0].id}/photos`,'POST',file)).status,200);
+  const history=(await request(`${endpoint}/history`)).data;
+  assert.equal((await request(endpoint,'PATCH',{archived:true})).status,400);
+  assert.equal((await detail()).deletedItems.length,1);assert.deepEqual((await request(`${endpoint}/history`)).data,history);
+});
+test('Undo refuses to delete a new pallet after another user adds dependent items',async()=>{
+  const {endpoint,detail}=await editFixture('Dependent content guard');
+  const user=await createMember('undo-dependency@example.test');await request(`${endpoint}/access`,'PUT',{userIds:[user.user.id]});
+  const target=(await detail()).pallets[0];
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Colleague cargo',palletId:target.id}]},user.session);
+  assert.equal((await historyAction(endpoint)).status,409);
+  assert.equal((await detail()).pallets.length,3);assert.equal((await detail()).items.length,1);
+});
+
+test('Archiving during an edit cannot silently turn recoverable deletion into permanent deletion',async()=>{
+  const {endpoint,detail}=await editFixture('Archive race guard');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Keep me'}]});
+  const item=(await detail()).items[0];await request(endpoint,'PATCH',{archived:true});
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'delete',entries:entries([item]),expectedArchived:false})).status,409);
+  assert.equal((await request(`/items/${item.id}`,'DELETE',{revision:item.revision})).status,409);
+  assert.equal((await detail()).items.length,1);
+  assert.equal((await request(`/items/${item.id}`,'DELETE',{revision:item.revision,expectedArchived:true,permanent:true})).status,200);
+  assert.equal((await detail()).deletedItems.length,0);assert.equal((await request(`${endpoint}/history`)).data.undo,null);
+});
+test('Undo history expiry releases retained deleted pallet photos',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('History retention');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Editable'}]});
+  const file=new FormData();file.append('files',new Blob([pngSample]),'retention.png');await request(`/pallets/${pallets[0].id}/photos`,'POST',file);
+  const photo=(await detail()).pallets[0].photos[0],filename=path.join(dir,'uploads',path.basename(photo.url));
+  await request(`/pallets/${pallets[0].id}`,'DELETE');assert.equal(existsSync(filename),true);
+  const item=(await detail()).items[0];
+  for(let i=0;i<50;i++)assert.equal((await request(`/items/${item.id}`,'PATCH',{note:`Change ${i}`})).status,200);
+  assert.equal(existsSync(filename),false);
+  const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  assert.equal(connection.prepare('SELECT COUNT(*) AS n FROM edit_history WHERE shipmentId=?').get(item.shipmentId).n,50);connection.close();
 });
