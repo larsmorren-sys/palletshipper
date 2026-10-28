@@ -23,6 +23,16 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     CREATE INDEX IF NOT EXISTS deleted_items_shipment ON deleted_items(shipmentId);
     CREATE INDEX IF NOT EXISTS edit_history_scope ON edit_history(shipmentId,userId,sequence);`);
   for (const row of db.prepare('SELECT id FROM items WHERE createdOrder=0 ORDER BY rowid').all()) db.prepare('UPDATE items SET createdOrder=? WHERE id=?').run(stamp(),row.id);
+  // Older undo records predate unit types; preserve their ability to undo/redo pallets.
+  for(const entry of db.prepare('SELECT id,changes FROM edit_history').all()){
+    const changes=JSON.parse(entry.changes);let migrated=false;
+    for(const change of changes)if(change.table==='pallets')for(const side of ['before','after']){
+      const row=change[side];if(!row)continue;
+      if(row.type===undefined){row.type='pallet';migrated=true;}
+      if(row.otherType===undefined){row.otherType='';migrated=true;}
+    }
+    if(migrated)db.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),entry.id);
+  }
   const tables = ['items','pallets','pallet_checks','pallet_photos'];
   const key = (table,row) => table === 'pallet_checks' ? `${row.palletId}:${row.stage}` : row.id;
   const rows = (table,id) => table === 'items' || table === 'pallets' ? db.prepare(`SELECT * FROM ${table} WHERE shipmentId=?`).all(id) : db.prepare(`SELECT t.* FROM ${table} t JOIN pallets p ON p.id=t.palletId WHERE p.shipmentId=?`).all(id);
@@ -135,7 +145,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
       checkRevision(entry,view.revision);return row;
     });
   }
-  function target(req){const id=req.body.palletId||null;if(id&&!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id,req.params.id))throw fail('Choose a pallet in this shipment.');return id;}
+  function target(req){const id=req.body.palletId||null;if(id&&!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id,req.params.id))throw fail('Choose a transport unit in this shipment.');return id;}
   app.post('/api/shipments/:id/items/bulk',(req,res)=>{
     const operation=req.body.operation;
     if(!['assign','delete','restore'].includes(operation))throw fail('Choose assign, delete or restore.');
@@ -159,12 +169,12 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     const records=selected(req,'pallets'),operation=req.body.operation;
     if(!['delete','assign'].includes(operation))throw fail('Choose delete or move contents.');
     const palletId=operation==='assign'?target(req):null;
-    if(records.some(p=>p.id===palletId))throw fail('Choose a destination outside the selected pallets.');
+    if(records.some(p=>p.id===palletId))throw fail('Choose a destination outside the selected units.');
     // Contents have their own revisions: never overwrite a colleague's item edits.
     const contents=records.flatMap(p=>db.prepare('SELECT * FROM items WHERE palletId=?').all(p.id));
     if(!Array.isArray(req.body.items)||contents.length!==req.body.items.length)throw fail('Pallet contents changed. Refresh and try again.',409);
     for(const item of contents){const expected=req.body.items.find(e=>e.id===item.id);if(!expected||expected.revision!==itemView(item).revision)throw fail('Pallet contents changed. Refresh and try again.',409);}
-    req.editLabel=`${operation==='delete'?'Delete':'Move contents of'} ${records.length} pallet${records.length===1?'':'s'}`;
+    req.editLabel=`${operation==='delete'?'Delete':'Move contents of'} ${records.length} unit${records.length===1?'':'s'}`;
     for(const pallet of records){
       db.prepare('UPDATE items SET palletId=? WHERE palletId=?').run(palletId,pallet.id);
       if(operation==='delete'){db.prepare('DELETE FROM pallet_photos WHERE palletId=?').run(pallet.id);db.prepare('DELETE FROM pallets WHERE id=?').run(pallet.id);}

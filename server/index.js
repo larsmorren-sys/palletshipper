@@ -1,3 +1,4 @@
+import { unitTypes, unitTypeLabel } from '../shared/transport-units.js';
 import { revision, checkRevision } from './revisions.js';
 import express from 'express';
 import multer from 'multer';
@@ -34,6 +35,9 @@ for (const field of ['returnDestination', 'outboundDate', 'returnDate']) {
 // Pallet tracking is independent of every object's tracking, including existing data.
 if (!db.prepare('PRAGMA table_info(pallets)').all().some(column => column.name === 'statuses')) {
   db.exec("ALTER TABLE pallets ADD COLUMN statuses TEXT NOT NULL DEFAULT '{}'");
+}
+for (const [field,type] of [['type', "TEXT NOT NULL DEFAULT 'pallet'"], ['otherType', "TEXT NOT NULL DEFAULT ''"]]) {
+  if (!db.prepare('PRAGMA table_info(pallets)').all().some(column=>column.name===field)) db.exec(`ALTER TABLE pallets ADD COLUMN ${field} ${type}`);
 }
 // Give existing objects stable instance numbers without changing their names or tracking.
 if (!db.prepare('PRAGMA table_info(items)').all().some(column => column.name === 'instanceNumber')) {
@@ -162,30 +166,38 @@ app.get('/api/shipments/:id', (req, res) => {
   requireShipment(req.user, req.params.id);
   res.json({ hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY createdOrder').all(req.params.id).map(itemView), lastImported: editor.recent(req.params.id), deletedItems: editor.deleted(req.params.id) });
 });
+function unitFields(body, current={type:'pallet',otherType:''}) {
+  const type=body.type===undefined?current.type:body.type;
+  const otherType=body.otherType===undefined?current.otherType:body.otherType;
+  if(!unitTypes.some(([key])=>key===type))throw fail('Choose Pallet, Case, Suitcase or Other.');
+  if(typeof otherType!=='string'||otherType.trim().length>80||type==='other'&&!otherType.trim())throw fail('Specify the other unit type using 1 to 80 characters.');
+  return {type,otherType:type==='other'?otherType.trim():''};
+}
 app.post('/api/shipments/:id/pallets', (req, res) => {
   requireShipment(req.user, req.params.id);
   const name = clean(req.body.name);
-  const prefix = req.body.prefix === undefined ? 'Pallet' : req.body.prefix;
+  const unit=unitFields(req.body);
+  const prefix = req.body.prefix === undefined ? unitTypeLabel(unit) : req.body.prefix;
   const postfix = req.body.postfix === undefined ? '' : req.body.postfix;
   if (typeof prefix !== 'string' || typeof postfix !== 'string' || prefix.trim().length > 90 || postfix.trim().length > 90) throw fail('Use no more than 90 characters for the prefix and postfix.');
   const quantity = Number(req.body.quantity ?? 1);
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw fail('Choose a whole quantity from 1 to 200 pallets.');
-  if (name && quantity > 1) throw fail('Multiple pallets are named automatically. Leave the name blank.');
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw fail('Choose a whole quantity from 1 to 200 transport units.');
+  if (name && quantity > 1) throw fail('Multiple transport units are named automatically. Leave the name blank.');
   const pallets = [];
   db.exec('SAVEPOINT mutation');
   try {
     const existing = db.prepare('SELECT name FROM pallets WHERE shipmentId=?').all(req.params.id);
-    if (name && existing.some(pallet => objectNameKey(pallet.name) === objectNameKey(name))) throw fail('A pallet with this name already exists.');
+    if (name && existing.some(pallet => objectNameKey(pallet.name) === objectNameKey(name))) throw fail('A transport unit with this name already exists.');
     const start = nextPalletNumber(existing, prefix, postfix);
-    const insert = db.prepare('INSERT INTO pallets (id, shipmentId, name, photo) VALUES (?, ?, ?, NULL)');
+    const insert = db.prepare('INSERT INTO pallets (id, shipmentId, name, photo, type, otherType) VALUES (?, ?, ?, NULL, ?, ?)');
     for (let i = 0; i < quantity; i++) {
-      const pallet = { id: randomUUID(), name: name || palletName(start + i, prefix, postfix), shipmentId: req.params.id, photo: null, photos: [], statuses: {} };
-      if (existing.some(p => objectNameKey(p.name) === objectNameKey(pallet.name))) throw fail('A pallet with this name already exists.');
-      insert.run(pallet.id, pallet.shipmentId, pallet.name); pallets.push(pallet);
+      const pallet = { id: randomUUID(), name: name || palletName(start + i, prefix, postfix), shipmentId: req.params.id, photo: null, photos: [], statuses: {}, ...unit };
+      if (existing.some(p => objectNameKey(p.name) === objectNameKey(pallet.name))) throw fail('A transport unit with this name already exists.');
+      insert.run(pallet.id, pallet.shipmentId, pallet.name, pallet.type, pallet.otherType); pallets.push(pallet);
     }
     db.exec('RELEASE mutation');
   } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
-  req.editLabel = `Add ${pallets.length} pallet${pallets.length===1?'':'s'}`;
+  req.editLabel = `Add ${pallets.length} unit${pallets.length===1?'':'s'}`;
   res.status(201).json({ id: pallets[0].id, added: pallets.length, pallets });
 });
 app.patch('/api/pallets/:id', (req, res) => {
@@ -193,12 +205,13 @@ app.patch('/api/pallets/:id', (req, res) => {
   if (!pallet) throw fail('Pallet not found.', 404);
   requireShipment(req.user, pallet.shipmentId);
   checkRevision(req.body, palletView(pallet).revision);
-  if (!('name' in req.body) && !('status' in req.body)) throw fail('Specify a name or status.');
+  if (!['name','status','type','otherType'].some(key=>key in req.body)) throw fail('Specify a name or status.');
+  const unit=unitFields(req.body,pallet);
   let name = pallet.name;
   if ('name' in req.body) {
-    if (typeof req.body.name !== 'string' || !req.body.name.trim() || req.body.name.trim().length > 200) throw fail('Enter a pallet name of up to 200 characters.');
+    if (typeof req.body.name !== 'string' || !req.body.name.trim() || req.body.name.trim().length > 200) throw fail('Enter a unit name of up to 200 characters.');
     name = req.body.name.trim();
-    if (db.prepare('SELECT id, name FROM pallets WHERE shipmentId=? AND id<>?').all(pallet.shipmentId, pallet.id).some(p => objectNameKey(p.name) === objectNameKey(name))) throw fail('A pallet with this name already exists.');
+    if (db.prepare('SELECT id, name FROM pallets WHERE shipmentId=? AND id<>?').all(pallet.shipmentId, pallet.id).some(p => objectNameKey(p.name) === objectNameKey(name))) throw fail('A transport unit with this name already exists.');
   }
   const statuses = JSON.parse(pallet.statuses);
   if ('status' in req.body) {
@@ -208,10 +221,10 @@ app.patch('/api/pallets/:id', (req, res) => {
   db.exec('SAVEPOINT mutation');
   try {
     if ('status' in req.body) challenges.record(pallet, req.body.status, req.body.checked, req.user.id, statuses[req.body.status]);
-    db.prepare('UPDATE pallets SET name=?, statuses=? WHERE id=?').run(name, JSON.stringify(statuses), pallet.id);
+    db.prepare('UPDATE pallets SET name=?, statuses=?, type=?, otherType=? WHERE id=?').run(name, JSON.stringify(statuses), unit.type, unit.otherType, pallet.id);
     db.exec('RELEASE mutation');
   } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
-  req.editLabel = `${'name' in req.body ? 'Rename' : 'Update tracking for'} ${pallet.name}`;
+  req.editLabel = `${['name','type','otherType'].some(key=>key in req.body) ? 'Edit' : 'Update tracking for'} ${pallet.name}`;
   res.json(palletView(db.prepare('SELECT * FROM pallets WHERE id=?').get(pallet.id)));
 });
 app.delete('/api/pallets/:id', (req, res) => {

@@ -1,6 +1,6 @@
 # Palletshipper
 
-A shipment and pallet management application built with React, Vite, Tailwind CSS, Node.js and Express. Each shipment contains pallets and individual equipment items. Items and pallets have independent tracking for **Out warehouse**, **In location**, **Out location** and **In warehouse**.
+A shipment and pallet management application built with React, Vite, Tailwind CSS, Node.js and Express. Each shipment contains transport units (pallets, cases, suitcases or a specified Other type) and individual equipment items. Items and pallets have independent tracking for **Out warehouse**, **In location**, **Out location** and **In warehouse**.
 
 ## Start here: new installation
 
@@ -38,7 +38,7 @@ Log in as the administrator and use **User management** to create accounts. Crea
 
 The **New shipment** form groups each outbound/return location name with its address, followed by the outbound and return dates. Use **Find address** beside each address and select a match, just as in Shipment settings. The configured warehouse address and its confirmed coordinates are prefilled; you only need to find the outbound address. Confirming both addresses saves the straight-line challenge distance automatically when creating the shipment. Location names remain separate and are the only location text used on labels and reports. You can also create a shipment without confirming its addresses and configure distances later.
 
-Add pallets, import or add equipment, and use **Pallet overview** for pallet-level transport checks. Item-level tracking is separate and does not earn challenge points.
+Add pallets, import or add equipment, and use **Transport overview** for unit-level transport checks. Item-level tracking is separate and does not earn challenge points.
 
 ### 4. Set up addresses and optional automatic distances
 
@@ -96,7 +96,7 @@ Passwords are stored as salted scrypt hashes. Session tokens are hashed in the d
 
 ## Shipments and access
 
-Administrators can see all shipments. Other users can see shipments they created or were assigned. In **Shipment settings → User access**, the creator or an administrator selects who may view and update a shipment. There is no separate read-only role.
+Administrators can see all shipments. Other users can see shipments they created or were assigned. Every user with shipment access can change all Shipment settings, including names/dates, addresses/distances, logos, access assignments, archiving/restoring and confirmed shipment deletion. Administrators and the creator retain their existing access. Revoking an assignment removes shipment access and management rights immediately. Account administration and global Challenge settings remain administrator-only. There is no separate read-only role.
 
 Shipment settings also include:
 
@@ -109,21 +109,23 @@ Existing destination data remains the outbound destination. Route details appear
 
 The browser remembers the last opened shipment per account, including archived shipments. If it is deleted or access is revoked, the application selects an available shipment.
 
-## Pallets and equipment
+## Transport units and equipment
 
-Add 1 to 200 pallets at a time. Customize the **Prefix** and **Postfix** around the automatic number, for example `Stage 1 London`. A preview shows the first and last names. Numbers continue for the same prefix/postfix combination within a shipment. The default prefix is `Pallet`; empty prefix and postfix fields produce numeric names.
+Use **Add unit** or **Add transport units** to add 1 to 200 units of one type at a time. Choose **Pallet**, **Case**, **Suitcase**, or **Other**; Other requires a description of 1–80 characters, such as `Tool box`. The default name prefix follows the chosen type; custom prefixes/postfixes remain available. Existing pallets migrate to type Pallet without changing their identities, contents, photos, tracking or links. All types have the same item assignment, independent tracking, photos, bulk operations, undo/redo, packing lists and A6 QR labels. Unit types are shown in the sidebar/overview and on exports. Filter the overview by type. Types can be corrected through Edit mode or the unit edit dialog; changes are undoable and recalculate challenge scores from the recorded arrivals.
+
+Customize the **Prefix** and **Postfix** around the automatic number, for example `Stage 1 London`. A preview shows the first and last names. Numbers continue for the same prefix/postfix combination within a shipment. The default prefix is `Pallet`; empty prefix and postfix fields produce numeric names.
 
 When an input row has a quantity above 1, its individual items receive stable numbers, for example `LED screen 1` and `LED screen 2`. Quantity 1 keeps the exact name without adding a suffix. Previously numbered items keep their existing names. Numbers remain reserved across deletion, duplication and undo; moving or restoring an item does not renumber it.
 
 You can edit or delete items, assign them to pallets, search by name, number, code or note, and sort by name or order added. Renaming preserves tracking; if a number conflicts under the new description, the next available number is assigned.
 
-Use **Pallet overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires or the shipment is archived/deleted.
+Use **Transport overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires or the shipment is archived/deleted.
 
 ## Edit mode, recent items and undo
 
 Use **Edit mode** in either Items or Pallet overview. Edit item names, codes, notes and extra field values directly in the existing rows; pallet names are editable in Pallet overview. Each changed row has **Save** and **Cancel**. Save or cancel drafts before leaving the view or starting another operation. Selection checkboxes and **Select all visible** apply to the current search/filter, not hidden rows.
 
-Select items to **Move to pallet…** or **Delete selected**. The destination picker supports searching and scrolling, including hundreds of pallets. On desktop or tablet, drag the grip beside an item onto a highlighted pallet in the sidebar or destination panel. Dragging a selected row moves the visible selection; dragging another row moves that row. Grips support touch without preventing normal page scrolling elsewhere; the page and destination lists scroll near their edges. Tap **Move to pallet…** as an alternative to dragging. Escape cancels a drag. Use the sidebar's pallet search to find destinations quickly.
+Select items to **Move to unit…** or **Delete selected**. The destination picker supports searching and scrolling, including hundreds of pallets. On desktop or tablet, drag the grip beside an item onto a highlighted pallet in the sidebar or destination panel. Dragging a selected row moves the visible selection; dragging another row moves that row. Grips support touch without preventing normal page scrolling elsewhere; the page and destination lists scroll near their edges. Tap **Move to unit…** as an alternative to dragging. Escape cancels a drag. Use the sidebar's pallet search to find destinations quickly.
 
 In Pallet overview, selected pallets can be deleted together or have their contents moved to a destination pallet. **Move contents** preserves the source pallets, their photos and independent tracking. Pallets themselves are not nested. Deleting selected pallets moves their items to Unassigned. Bulk operations validate all row revisions and pallet contents before changing anything.
 
@@ -148,7 +150,7 @@ Review column mapping, headers, descriptions and quantities before importing. Fu
 
 Item and pallet tracking are independent: checking a pallet never checks its items, and moving or deleting an item does not change pallet tracking.
 
-In **Pallet overview**, check **Out warehouse** when a pallet is loaded onto the truck. Search by pallet name and filter loaded or unloaded pallets. **View contents** opens its equipment and photos.
+In **Transport overview**, check **Out warehouse** when a pallet is loaded onto the truck. Search by pallet name and filter loaded or unloaded pallets. **View contents** opens its equipment and photos.
 
 The progress counter follows the first stage that is incomplete for any pallet. Once all pallets complete Out warehouse, it advances to In location, then Out location, then In warehouse. After all four stages, it shows completion. Removing a check or adding a new pallet moves it back to the first incomplete stage. Search filters and column visibility do not change this calculation.
 
@@ -223,6 +225,8 @@ Open **Transport Challenge** using the star button in the page footer for annual
 Each shipment has a warehouse/return address and an outbound address, entered directly in **Shipment settings → Transport addresses and distances**. There is no location library. Administrators can set a default warehouse address in Challenge settings; new shipments inherit it. Existing destination names and dates remain available. Labels and reports always use the manually entered location names, never the challenge addresses. Physical addresses are used only for the game distance calculation.
 
 For address search, set `ORS_API_KEY` on the server (Railway service → Variables). Keys come from https://account.heigit.org/. The key stays on the server and is never returned to the browser. Administrators can use **Test route connection** to test geocoding. Search each address and select the correct matches. Shipment settings automatically calculate and save the distance once both matches are confirmed; new shipments save it on creation. Changing and reconfirming an address updates the distance automatically. Manual overrides are preserved when simply opening the settings. If automatic saving fails, the error remains visible and **Retry automatic save** is available. Address lookup uses the HeiGIT Pelias endpoint with OpenStreetMap data. The server calculates the great-circle (straight-line) distance locally from the selected coordinates, rounds to whole kilometres and saves the same distance for outbound and return. These are game estimates, not actual driving, sea or air routes. No external directions endpoint is used, including for intercontinental destinations. Coordinates and distances are persisted; confirmed coordinates continue working without an API key. Manual distance overrides remain available. Addresses are sent to HeiGIT only on an explicit search. Previously saved automatic road distances with valid coordinates migrate to straight-line distances on startup; manual distances remain unchanged. The unused historical road cache is not used for new calculations.
+
+Distance points are signed: pallets, cases and Other use a factor of **+1**; suitcases use **−0.25**. For example, one suitcase arrival on a 100 km outbound leg contributes −25 points to that leg's reward pool; the return leg is calculated separately. A mixed arrival pool of one pallet and one suitcase over 100 km contributes +75 points. The existing winner/tie-sharing rules apply to the signed pool, not separately to the user checking each suitcase. Check counts and arrival counts remain positive normal counts for all unit types. Rankings show negative and zero-net scores and negative provisional rewards. Legacy API/database names such as `pallets`, `palletId` and `palletKm` are retained for compatibility; `palletKm` now represents signed distance points.
 
 Outbound points use Out warehouse + In location checks; return points use Out location + In warehouse checks. The user with the most active checks on a leg receives its distance rewards; tied users split them equally. Only arrival checks with user attribution earn pallet kilometres. Rewards for partial arrivals are provisional and can change as further checks are recorded. The reward is complete when every pallet has an attributed arrival. Year/month filters use the Belgian calendar and original arrival date. Archiving preserves scores; deleting a pallet or shipment removes its scores. Physical pallets are not tracked across shipments.
 

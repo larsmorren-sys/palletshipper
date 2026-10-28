@@ -237,10 +237,10 @@ test('Shipment permissions protect lists, items, pallets and photos and can be r
   assert.equal((await request(`/pallets/${pallet.id}/photo`, 'POST', form, member.session)).status, 404);
   assert.equal((await getPhoto(member.session)).status, 404); assert.equal((await getPhoto(null)).status, 401);
   assert.equal((await request(`${endpoint}/access`, 'PUT', { userIds: [member.user.id] }, owner.session)).status, 200);
-  assert.equal((await request(`${endpoint}/access`, 'GET', undefined, member.session)).status, 404);
-  assert.equal((await request(`${endpoint}/access`, 'PUT', { userIds: [] }, member.session)).status, 404);
+  assert.equal((await request(`${endpoint}/access`, 'GET', undefined, member.session)).status, 200);
+  assert.equal((await request(`${endpoint}/access`, 'PUT', { userIds: [member.user.id] }, member.session)).status, 200);
   assert.equal((await request(endpoint, 'GET', undefined, member.session)).status, 200);
-  assert.equal((await request('/shipments', 'GET', undefined, member.session)).data.find(s => s.id === shipment.id).canManage, false);
+  assert.equal((await request('/shipments', 'GET', undefined, member.session)).data.find(s => s.id === shipment.id).canManage, true);
   assert.equal((await request(`/items/${item.id}`, 'PATCH', { status: 'outWarehouse', checked: true }, member.session)).status, 200);
   const image = await getPhoto(member.session); assert.equal(image.status, 200); assert.equal(image.headers.get('cache-control'), 'no-store');
   assert.equal((await request(endpoint)).status, 200);
@@ -420,7 +420,7 @@ test('Packing lists and A6 labels respect the selected pallet, permissions and c
   assert.equal((await request(`${endpoint}/logo`, 'POST', logo, stranger.session)).status, 404);
   await request(`${endpoint}/access`, 'PUT', { userIds: [stranger.user.id] });
   assert.equal((await get('label', stranger.session)).status, 200);
-  assert.equal((await request(`${endpoint}/logo`, 'POST', logo, stranger.session)).status, 404);
+  assert.equal((await request(`${endpoint}/logo`, 'POST', logo, stranger.session)).status, 200);
   await stop(); await start(); assert.ok((await (await get('label')).text()).includes('data:image/png;base64,'));
   await request(`${endpoint}/logo`, 'DELETE'); assert.equal((await request(endpoint)).data.hasLogo, false);
 });
@@ -489,7 +489,7 @@ test('Archiving and restoring preserve content and require management permission
   const pallet = (await request(`/shipments/${shipment.id}/pallets`, 'POST', {})).data;
   await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Lamp', palletId: pallet.id }] });
   await request(`/shipments/${shipment.id}/access`, 'PUT', { userIds: [member.user.id] });
-  assert.equal((await request(`/shipments/${shipment.id}`, 'PATCH', { archived: true }, member.session)).status, 404);
+  assert.equal((await request(`/shipments/${shipment.id}`, 'PATCH', { archived: true }, member.session)).status, 200);
   assert.equal((await request(`/shipments/${shipment.id}`, 'PATCH', { archived: 'yes' })).status, 400);
   const before = (await request(`/shipments/${shipment.id}`)).data;
   assert.ok((await request(`/shipments/${shipment.id}`, 'PATCH', { archived: true })).data.archivedAt);
@@ -514,7 +514,7 @@ test('Shipment deletion requires confirmation and removes content and photo file
   const data = (await request(`/shipments/${shipment.id}`)).data;
   const photo = data.pallets[0].photos[0];
   assert.ok(existsSync(path.join(dir, 'uploads', path.basename(photo.url))));
-  assert.equal((await request(`/shipments/${shipment.id}`, 'DELETE', { confirmName: shipment.name }, member.session)).status, 404);
+  assert.equal((await request(`/shipments/${shipment.id}`, 'DELETE', { confirmName: 'wrong' }, member.session)).status, 400);
   assert.equal((await request(`/shipments/${shipment.id}`, 'DELETE', { confirmName: 'wrong' })).status, 400);
   assert.equal((await request(`/shipments/${shipment.id}`)).status, 200);
   assert.equal((await request(`/shipments/${shipment.id}`, 'DELETE', { confirmName: shipment.name })).status, 200);
@@ -624,7 +624,7 @@ test('Shipment name and location edits preserve archive state and content and re
   const before = (await request(`/shipments/${shipment.id}`)).data;
   const member = await createMember('shipment-rename@example.test');
   await request(`/shipments/${shipment.id}/access`, 'PUT', { userIds: [member.user.id] });
-  assert.equal((await request(`/shipments/${shipment.id}`, 'PATCH', { name: 'Verboden' }, member.session)).status, 404);
+  assert.equal((await request(`/shipments/${shipment.id}`, 'PATCH', { name: 'Shared update' }, member.session)).status, 200);
   const updated = await request(`/shipments/${shipment.id}`, 'PATCH', { name: '  Nieuwe naam  ', destination: ' Antwerpen ' });
   assert.equal(updated.status, 200); assert.equal(updated.data.name, 'Nieuwe naam'); assert.equal(updated.data.destination, 'Antwerpen'); assert.ok(updated.data.archivedAt);
   assert.deepEqual((await request(`/shipments/${shipment.id}`)).data, before);
@@ -1023,4 +1023,86 @@ test('Undo history expiry releases retained deleted pallet photos',async()=>{
   assert.equal(existsSync(filename),false);
   const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
   assert.equal(connection.prepare('SELECT COUNT(*) AS n FROM edit_history WHERE shipmentId=?').get(item.shipmentId).n,50);connection.close();
+});
+
+test('Transport units support all types, custom descriptions, validation, exports and reversible type edits',async()=>{
+  const shipment=(await request('/shipments','POST',{name:'Transport types'})).data,endpoint=`/shipments/${shipment.id}`;
+  const units=[];
+  for(const body of [{},{type:'case',quantity:2},{type:'suitcase'},{type:'other',otherType:'Road trunk'}]){
+    const response=await request(`${endpoint}/pallets`,'POST',body);assert.equal(response.status,201);units.push(...response.data.pallets);
+  }
+  assert.deepEqual(units.map(p=>[p.name,p.type,p.otherType]),[['Pallet 1','pallet',''],['Case 1','case',''],['Case 2','case',''],['Suitcase 1','suitcase',''],['Road trunk 1','other','Road trunk']]);
+  for(const body of [{type:'unknown'},{type:'other'},{type:'other',otherType:' '},{type:'other',otherType:'x'.repeat(81)}])assert.equal((await request(`${endpoint}/pallets`,'POST',body)).status,400);
+  let data=(await request(endpoint)).data;assert.equal(data.pallets.length,5);assert.equal((await request('/shipments/legacy')).data.pallets[0].type,'pallet');
+  const target=data.pallets[3];await request(`/pallets/${target.id}`,'PATCH',{status:'outWarehouse',checked:true,revision:target.revision});
+  data=(await request(endpoint)).data;const before=data.pallets.find(p=>p.id===target.id);
+  const updated=await request(`/pallets/${target.id}`,'PATCH',{type:'other',otherType:'Trolley',revision:before.revision});assert.equal(updated.status,200);assert.equal(updated.data.otherType,'Trolley');assert.deepEqual(updated.data.statuses,before.statuses);
+  assert.equal((await historyAction(endpoint)).status,200);assert.equal((await request(endpoint)).data.pallets.find(p=>p.id===target.id).type,'suitcase');
+  assert.equal((await historyAction(endpoint,'redo')).status,200);
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Contents',palletId:target.id}]});
+  const headers={Cookie:adminSession.cookie};const csv=await fetch(`http://127.0.0.1:${port}/api${endpoint}/export?format=csv`,{headers});assert.match(await csv.text(),/Trolley/);
+  const label=await fetch(`http://127.0.0.1:${port}/api/pallets/${target.id}/export?format=label`,{headers});assert.match(await label.text(),/<p class="caption">Trolley<\/p>/);
+  await stop();await start();assert.equal((await request(endpoint)).data.pallets.find(p=>p.id===target.id).otherType,'Trolley');
+});
+test('Suitcases subtract one quarter of each leg distance, including negative provisional scores and reversible corrections',async()=>{
+  const member=await createMember('suitcase-points@example.test','Suitcase user','member',true);
+  const shipment=(await request('/shipments','POST',{name:'Suitcase points'})).data,endpoint=`/shipments/${shipment.id}`;
+  await request(`${endpoint}/access`,'PUT',{userIds:[member.user.id]});
+  const suitcase=(await request(`${endpoint}/pallets`,'POST',{type:'suitcase'})).data.pallets[0];
+  const unused=(await request(`${endpoint}/pallets`,'POST',{})).data.pallets[0];
+  assert.equal((await request(`${endpoint}/route`,'PUT',{warehouseAddress:'Warehouse',outboundAddress:'Destination',outboundKm:101,returnKm:80},member.session)).status,200);
+  await request(`/pallets/${suitcase.id}`,'PATCH',{status:'inLocation',checked:true},member.session);
+  const board=async()=>(await request('/challenges','GET',undefined,member.session)).data;
+  const score=async()=>(await board()).rows.find(r=>r.id===member.user.id);
+  assert.equal((await score()).palletKm,-25.25);assert.equal((await score()).provisionalKm,-25.25);assert.equal((await board()).transports[0].suitcaseArrivals,1);
+  await request(`/pallets/${unused.id}`,'DELETE');assert.equal((await score()).provisionalKm,0);
+  await request(`/pallets/${suitcase.id}`,'PATCH',{status:'inWarehouse',checked:true},member.session);assert.equal((await score()).palletKm,-45.25);
+  for(const checked of [false,true,true])await request(`/pallets/${suitcase.id}`,'PATCH',{status:'inLocation',checked},member.session);
+  assert.equal((await score()).palletKm,-45.25);
+  assert.equal((await request(`/pallets/${suitcase.id}`,'PATCH',{type:'case'},member.session)).status,200);assert.equal((await score()).palletKm,181);
+  assert.equal((await historyAction(endpoint,'undo',member.session)).status,200);assert.equal((await score()).palletKm,-45.25);
+  assert.equal((await score()).checks,2);
+});
+test('Mixed transport types share the signed distance pool between tied winners',async()=>{
+  const a=await createMember('mixed-a@example.test','Mixed A','member',true),b=await createMember('mixed-b@example.test','Mixed B','member',true);
+  const shipment=(await request('/shipments','POST',{name:'Mixed unit rewards'})).data,endpoint=`/shipments/${shipment.id}`;
+  await request(`${endpoint}/access`,'PUT',{userIds:[a.user.id,b.user.id]});
+  await request(`${endpoint}/route`,'PUT',{warehouseAddress:'Warehouse',outboundAddress:'Destination',outboundKm:100,returnKm:100});
+  for(const body of [{type:'pallet'},{type:'case'},{type:'other',otherType:'Cart'},{type:'suitcase'}]){
+    const unit=(await request(`${endpoint}/pallets`,'POST',body)).data.pallets[0];
+    await request(`/pallets/${unit.id}`,'PATCH',{status:'outWarehouse',checked:true},a.session);
+    await request(`/pallets/${unit.id}`,'PATCH',{status:'inLocation',checked:true},b.session);
+  }
+  const board=(await request('/challenges','GET',undefined,a.session)).data;
+  assert.equal(board.rows.find(r=>r.id===a.user.id).palletKm,137.5);assert.equal(board.rows.find(r=>r.id===b.user.id).palletKm,137.5);
+  assert.equal(board.transports[0].palletKm,275);assert.equal(board.transports[0].suitcaseArrivals,1);assert.equal(board.transports[0].completed,true);
+});
+test('Every assigned user can manage shipment settings, while revocation and account administration remain protected',async()=>{
+  const member=await createMember('shared-settings@example.test'),next=await createMember('shared-next@example.test');
+  const shipment=(await request('/shipments','POST',{name:'Shared settings'})).data,endpoint=`/shipments/${shipment.id}`;
+  assert.equal((await request(endpoint,'PATCH',{name:'Not allowed'},member.session)).status,404);
+  await request(`${endpoint}/access`,'PUT',{userIds:[member.user.id]});
+  assert.equal((await request('/shipments','GET',undefined,member.session)).data.find(s=>s.id===shipment.id).canManage,true);
+  const updated=await request(endpoint,'PATCH',{name:'Renamed by assigned user',destination:'Outbound name',returnDestination:'Return name'},member.session);assert.equal(updated.status,200);
+  assert.equal((await request(`${endpoint}/route`,'PUT',{warehouseAddress:'Warehouse',outboundAddress:'Destination',outboundKm:100,returnKm:80,revision:updated.data.revision},member.session)).status,200);
+  const image=new FormData();image.append('file',new Blob([pngSample]),'shared.png');assert.equal((await request(`${endpoint}/logo`,'POST',image,member.session)).status,200);
+  assert.equal((await request(`${endpoint}/logo`,'DELETE',{},member.session)).status,200);
+  assert.equal((await request(`${endpoint}/access`,'PUT',{userIds:[member.user.id,next.user.id]},member.session)).status,200);
+  assert.equal((await request('/users','GET',undefined,member.session)).status,403);assert.equal((await request('/challenges/settings','PUT',{shared:true},member.session)).status,403);
+  assert.equal((await request(endpoint,'PATCH',{archived:true},next.session)).status,200);assert.equal((await request(endpoint,'PATCH',{archived:false},member.session)).status,200);
+  await request(`${endpoint}/access`,'PUT',{userIds:[member.user.id]});
+  assert.equal((await request(endpoint,'PATCH',{name:'Revoked'},next.session)).status,404);assert.equal((await request(`${endpoint}/access`,'GET',undefined,next.session)).status,404);
+  assert.equal((await request(endpoint,'DELETE',{confirmName:'Renamed by assigned user'},member.session)).status,200);
+});
+
+test('Existing undo records without unit type fields remain usable after upgrading',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('Legacy unit history');
+  await request(`/pallets/${pallets[0].id}`,'PATCH',{name:'Legacy renamed pallet'});
+  const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  const history=connection.prepare('SELECT id,changes FROM edit_history WHERE shipmentId=? ORDER BY sequence DESC LIMIT 1').get(pallets[0].shipmentId);
+  const changes=JSON.parse(history.changes);for(const change of changes)if(change.table==='pallets')for(const side of ['before','after'])if(change[side]){delete change[side].type;delete change[side].otherType;}
+  connection.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),history.id);connection.close();
+  await stop();await start();
+  assert.equal((await historyAction(endpoint)).status,200);assert.equal((await detail()).pallets[0].name,'Pallet 1');assert.equal((await detail()).pallets[0].type,'pallet');
+  assert.equal((await historyAction(endpoint,'redo')).status,200);assert.equal((await detail()).pallets[0].name,'Legacy renamed pallet');
 });

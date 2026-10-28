@@ -1,3 +1,4 @@
+import { unitDistanceFactor } from '../shared/transport-units.js';
 import { revision, checkRevision } from './revisions.js';
 import { routingConfigured, searchAddress, straightLineDistances, coordinates } from './routing.js';
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -71,7 +72,7 @@ export function installChallenges(app, db, auth) {
     const shipments = shared || req.user.role === 'admin' ? db.prepare('SELECT * FROM shipments').all() : visibleShipments(req.user);
     const allowed = new Set(shipments.map(s => s.id));
     const detailAllowed = new Set(visibleShipments(req.user).map(s => s.id));
-    const checks = db.prepare('SELECT c.*,p.shipmentId FROM pallet_checks c JOIN pallets p ON p.id=c.palletId WHERE c.active=1').all().filter(c => allowed.has(c.shipmentId));
+    const checks = db.prepare('SELECT c.*,p.shipmentId,p.type FROM pallet_checks c JOIN pallets p ON p.id=c.palletId WHERE c.active=1').all().filter(c => allowed.has(c.shipmentId));
     const users = db.prepare("SELECT id,CASE WHEN nickname<>'' THEN nickname ELSE name END AS name FROM users WHERE challengeParticipating=1 AND active=1").all();
     const scores = new Map(users.map(u => [u.id, { ...u, checks: 0, pallets: 0, palletKm: 0, provisionalKm: 0 }]));
     const inPeriod = date => { const period = periodOf(date); return period.year === year && (!month || period.month === month); };
@@ -89,9 +90,9 @@ export function installChallenges(app, db, auth) {
         const arrivals = legChecks.filter(c => c.stage === arrival);
         const periodArrivals = arrivals.filter(c => inPeriod(c.checkedAt));
         const completed = palletCount > 0 && arrivals.length === palletCount;
-        const kilometres = distance === null ? 0 : distance * periodArrivals.length;
+        const kilometres = distance === null ? 0 : distance * periodArrivals.reduce((total,check)=>total+unitDistanceFactor(check.type),0);
         for (const id of winners) { scores.get(id).palletKm += kilometres / winners.length; if (!completed) scores.get(id).provisionalKm += kilometres / winners.length; }
-        if (detailAllowed.has(shipment.id) && periodArrivals.length) transports.push({ shipmentId: shipment.id, name: shipment.name, leg, distanceKm: distance, arrived: periodArrivals.length, totalPallets: palletCount, completed, palletKm: kilometres, winners: winners.map(id => ({ id, name: scores.get(id).name })) });
+        if (detailAllowed.has(shipment.id) && periodArrivals.length) transports.push({ shipmentId: shipment.id, name: shipment.name, leg, distanceKm: distance, arrived: periodArrivals.length, totalPallets: palletCount, suitcaseArrivals: periodArrivals.filter(c=>c.type==='suitcase').length, completed, palletKm: kilometres, winners: winners.map(id => ({ id, name: scores.get(id).name })) });
       }
     }
     const rows = [...scores.values()].filter(s => s.checks || s.palletKm || s.id === req.user.id).map(s => ({ ...s, badges: [s.pallets >= 1 && 'First Delivery', s.checks >= 100 && '100 Pallet Checks', s.palletKm >= 1000 && '1,000 Pallet Kilometres'].filter(Boolean) }));

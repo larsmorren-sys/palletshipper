@@ -63,7 +63,7 @@ export function installAuth(app, db, dataDir) {
     return { user: safeUser(user), csrfToken, setupRequired: false };
   };
   const admin = req => { if (req.user.role !== 'admin') throw fail('Only administrators can manage users.', 403); };
-  const canManage = (user, shipment) => user.role === 'admin' || shipment.ownerId === user.id;
+  const canManage = (user, shipment) => user.role === 'admin' || shipment.ownerId === user.id || !!db.prepare('SELECT 1 FROM shipment_access WHERE shipmentId=? AND userId=?').get(shipment.id,user.id);
   const requireShipment = (user, id, manage = false) => {
     const shipment = db.prepare('SELECT * FROM shipments WHERE id=?').get(id);
     if (!shipment || !(canManage(user, shipment) || !manage && db.prepare('SELECT 1 FROM shipment_access WHERE shipmentId=? AND userId=?').get(id, user.id))) throw fail('Shipment not found or access denied.', 404);
