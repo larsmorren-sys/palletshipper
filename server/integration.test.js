@@ -73,10 +73,10 @@ test('Items have independent tracking, valid pallets and persistent storage', as
   let data = (await request(`/shipments/${shipment.id}`)).data;
   assert.equal(data.items.length, 2); assert.notEqual(data.items[0].id, data.items[1].id);
   const id = data.items[0].id;
-  const updated = await request(`/items/${id}`, 'PATCH', { status: 'outWarehouse', checked: true });
-  assert.ok(updated.data.statuses.outWarehouse);
+  const updated = await request(`/items/${id}`, 'PATCH', { status: 'inLocation', checked: true });
+  assert.ok(updated.data.statuses.outWarehouse);assert.ok(updated.data.statuses.inLocation);
   data = (await request(`/shipments/${shipment.id}`)).data;
-  assert.deepEqual(data.items[1].statuses, {});
+  assert.ok(data.items[1].statuses.outWarehouse);assert.equal(data.items[1].statuses.inLocation,undefined);
   const otherShipment = (await request('/shipments', 'POST', { name: 'Andere shipment' })).data;
   const otherPallet = (await request(`/shipments/${otherShipment.id}/pallets`, 'POST', { name: 'Andere pallet' })).data;
   assert.equal((await request(`/items/${id}`, 'PATCH', { palletId: otherPallet.id })).status, 400);
@@ -448,13 +448,13 @@ test('Pallet tracking starts empty after migration and remains independent of it
   const { pallets } = (await request(`/shipments/${shipment.id}/pallets`, 'POST', { quantity: 2 })).data;
   await request(`/shipments/${shipment.id}/items`, 'POST', { rows: [{ name: 'Kist', quantity: 2, palletId: pallets[0].id }] });
   let data = (await request(`/shipments/${shipment.id}`)).data;
-  const item = data.items[0];
+  const item = data.items[0], itemStatuses=data.items.map(i=>i.statuses);
   for (const status of ['outWarehouse', 'inLocation', 'outLocation', 'inWarehouse']) {
     const result = await request(`/pallets/${pallets[0].id}`, 'PATCH', { status, checked: true });
     assert.equal(result.status, 200); assert.ok(result.data.statuses[status]);
   }
   data = (await request(`/shipments/${shipment.id}`)).data;
-  assert.ok(data.items.every(i => Object.keys(i.statuses).length === 0));
+  assert.deepEqual(data.items.map(i=>i.statuses),itemStatuses);
   assert.deepEqual(data.pallets[1].statuses, {});
   const statuses = data.pallets[0].statuses;
   await request(`/items/${item.id}`, 'PATCH', { status: 'outWarehouse', checked: true });
@@ -914,7 +914,7 @@ test('Single names stay unnumbered, custom import columns survive duplicates, ed
   let data=await detail();assert.deepEqual(data.items.map(i=>i.displayName),['Cable 19','Fixture 1','Fixture 2']);assert.deepEqual(data.lastImported.map(i=>i.displayName),['Fixture 2','Fixture 1','Cable 19']);
   const original=data.items[0];
   const tracked=(await request(`/items/${original.id}`,'PATCH',{status:'inLocation',checked:true,revision:original.revision})).data;
-  const copy=await request(`/items/${original.id}/duplicate`,'POST',{revision:tracked.revision});assert.equal(copy.status,201);assert.deepEqual(copy.data.statuses,{});assert.deepEqual(copy.data.extraFields,fields);assert.equal(copy.data.displayName,'Cable 19 (copy)');
+  const copy=await request(`/items/${original.id}/duplicate`,'POST',{revision:tracked.revision});assert.equal(copy.status,201);assert.ok(copy.data.statuses.outWarehouse);assert.deepEqual(Object.keys(copy.data.statuses),['outWarehouse']);assert.deepEqual(copy.data.extraFields,fields);assert.equal(copy.data.displayName,'Cable 19 (copy)');
   const edited=(await request(`/items/${original.id}`,'PATCH',{extraFields:[{label:'Weight',value:'14 kg'}],revision:tracked.revision})).data;
   assert.equal((await request(`/items/${original.id}`,'DELETE',{revision:edited.revision})).status,200);
   data=await detail();assert.equal(data.deletedItems.length,1);assert.deepEqual(data.deletedItems[0].statuses,tracked.statuses);assert.equal(data.lastImported.some(i=>i.id===original.id),false);
@@ -1170,4 +1170,78 @@ test('Item undo records predating canonical name keys still restore generated na
   connection.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),history.id);connection.close();await stop();await start();
   assert.equal((await historyAction(endpoint)).status,200);assert.equal((await detail()).items[0].displayName,'Named item 1');assert.equal((await detail()).items[0].note,'Keep metadata');
   assert.equal((await historyAction(endpoint,'redo')).status,200);assert.equal((await detail()).items[0].displayName,'Hand named');
+});
+
+test('Assignment checks Out warehouse atomically, preserves dates, and undo restores the exact previous tracking',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('Automatic outbound item tracking');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Assign me'},{name:'Keep a date'}]});
+  let data=await detail();const [first,second]=data.items;
+  const firstMove=await request(`/items/${first.id}`,'PATCH',{palletId:pallets[0].id,revision:first.revision});assert.equal(firstMove.status,200);assert.ok(firstMove.data.statuses.outWarehouse);
+  assert.equal((await historyAction(endpoint)).status,200);data=await detail();assert.equal(data.items[0].palletId,null);assert.deepEqual(data.items[0].statuses,{});
+  assert.equal((await historyAction(endpoint,'redo')).status,200);assert.deepEqual((await detail()).items[0].statuses,firstMove.data.statuses);
+  const timestamp='2020-01-02T03:04:05.000Z',connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  connection.prepare('UPDATE items SET statuses=? WHERE id=?').run(JSON.stringify({outWarehouse:timestamp,inLocation:timestamp}),second.id);connection.close();
+  data=await detail();assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'assign',entries:entries(data.items),palletId:pallets[1].id})).status,200);
+  data=await detail();assert.equal(data.items[0].statuses.outWarehouse,firstMove.data.statuses.outWarehouse);assert.deepEqual(data.items[1].statuses,{outWarehouse:timestamp,inLocation:timestamp});assert.ok(data.pallets.every(p=>Object.keys(p.statuses).length===0));
+  const unchecked=(await request(`/items/${first.id}`,'PATCH',{status:'outWarehouse',checked:false})).data;
+  assert.equal((await request(`/items/${first.id}`,'PATCH',{name:'Metadata only',palletId:pallets[1].id,revision:unchecked.revision})).data.statuses.outWarehouse,null);
+  data=await detail();await request(`${endpoint}/items/bulk`,'POST',{operation:'assign',entries:entries([data.items[0]]),palletId:null});assert.equal((await detail()).items[0].statuses.outWarehouse,null);
+  data=await detail();await request(`${endpoint}/items/bulk`,'POST',{operation:'assign',entries:entries([data.items[0]]),palletId:pallets[2].id});assert.ok((await detail()).items[0].statuses.outWarehouse);
+});
+test('Created, imported, duplicated and bulk-moved assigned items are checked, while restores keep saved tracking',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('All outbound assignment routes');
+  await request(`${endpoint}/items`,'POST',{source:'import',rows:[{name:'New attached',palletId:pallets[0].id}]});
+  let data=await detail();assert.ok(data.items[0].statuses.outWarehouse);
+  await request(`/items/${data.items[0].id}`,'PATCH',{status:'outWarehouse',checked:false});
+  data=await detail();const copy=await request(`/items/${data.items[0].id}/duplicate`,'POST',{revision:data.items[0].revision});assert.equal(copy.status,201);assert.ok(copy.data.statuses.outWarehouse);
+  data=await detail();await request(`${endpoint}/pallets/bulk`,'POST',{operation:'assign',entries:entries([data.pallets[0]]),items:entries(data.items),palletId:pallets[1].id});
+  data=await detail();assert.ok(data.items.every(i=>i.statuses.outWarehouse));assert.ok(data.pallets.every(p=>Object.keys(p.statuses).length===0));
+  const unchecked=(await request(`/items/${data.items[0].id}`,'PATCH',{status:'outWarehouse',checked:false})).data;
+  await request(`/items/${unchecked.id}`,'DELETE',{revision:unchecked.revision});data=await detail();await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries(data.deletedItems)});
+  assert.equal((await detail()).items.find(i=>i.id===unchecked.id).statuses.outWarehouse,null);
+});
+test('Existing strict check-attribution schemas migrate without losing users, dates or tracking',async()=>{
+  const {endpoint,pallets}=await editFixture('Check schema migration');
+  await request(`/pallets/${pallets[0].id}`,'PATCH',{status:'inLocation',checked:true});
+  await stop();const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  const before=connection.prepare('SELECT * FROM pallet_checks WHERE palletId=?').all(pallets[0].id);
+  connection.exec(`BEGIN; ALTER TABLE pallet_checks RENAME TO checks_temporary;
+    CREATE TABLE pallet_checks(palletId TEXT NOT NULL REFERENCES pallets(id) ON DELETE CASCADE,stage TEXT NOT NULL,userId TEXT NOT NULL REFERENCES users(id),checkedAt TEXT NOT NULL,active INTEGER NOT NULL,PRIMARY KEY(palletId,stage));
+    INSERT INTO pallet_checks SELECT * FROM checks_temporary; DROP TABLE checks_temporary; COMMIT;`);connection.close();await start();
+  const migrated=new DatabaseSync(path.join(dir,'shipments.sqlite'));assert.equal(migrated.prepare('PRAGMA table_info(pallet_checks)').all().find(c=>c.name==='userId').notnull,0);assert.ok(migrated.prepare('PRAGMA foreign_key_list(pallet_checks)').all().some(c=>c.from==='userId'&&c.on_delete==='SET NULL'));assert.deepEqual(migrated.prepare('SELECT * FROM pallet_checks WHERE palletId=?').all(pallets[0].id),before);migrated.close();
+  assert.ok((await request(endpoint)).data.pallets[0].statuses.inLocation);
+});
+test('Administrators can delete accounts without deleting shipments, tracking, arrivals or other users undo history',async()=>{
+  const departing=await createMember('departing@example.test','Departing','member',true),remaining=await createMember('remaining@example.test','Remaining','member',true);
+  const admin=(await request('/auth/session')).data.user;
+  const shipment=(await request('/shipments','POST',{name:'Preserve when deleting account'},departing.session)).data,endpoint=`/shipments/${shipment.id}`;
+  await request(`${endpoint}/access`,'PUT',{userIds:[remaining.user.id]},departing.session);
+  await request(`${endpoint}/route`,'PUT',{warehouseAddress:'Warehouse',outboundAddress:'Venue',outboundKm:100,returnKm:80},departing.session);
+  const {pallets}=(await request(`${endpoint}/pallets`,'POST',{quantity:3},departing.session)).data;
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Keep cargo',palletId:pallets[0].id},{name:'Recycle cargo'}]},departing.session);
+  let data=(await request(endpoint)).data;
+  await request(`/items/${data.items[1].id}`,'DELETE',{revision:data.items[1].revision},departing.session);
+  for(const index of [0,2]){const file=new FormData();file.append('files',new Blob([pngSample]),`user-delete-${index}.png`);assert.equal((await request(`/pallets/${pallets[index].id}/photos`,'POST',file,departing.session)).status,200);}
+  data=(await request(endpoint)).data;const retainedPhoto=data.pallets[2].photos[0].url,livePhoto=data.pallets[0].photos[0].url;
+  await request(`/pallets/${pallets[2].id}`,'DELETE',{},departing.session);
+  for(const stage of ['outWarehouse','inLocation']){await request(`/pallets/${pallets[0].id}`,'PATCH',{status:stage,checked:true},departing.session);await request(`/pallets/${pallets[1].id}`,'PATCH',{status:stage,checked:true},remaining.session);}
+  await request(`${endpoint}/columns`,'PUT',{columns:{outWarehouse:false}},departing.session);
+  await request(`/pallets/${pallets[0].id}`,'DELETE',{},remaining.session);assert.equal((await historyAction(endpoint,'undo',remaining.session)).status,200);
+  const before=(await request(endpoint)).data;
+  assert.equal((await request(`/users/${departing.user.id}`,'DELETE',{confirmEmail:'wrong@example.test'})).status,400);
+  assert.equal((await request(`/users/${departing.user.id}`,'DELETE',{confirmEmail:departing.user.email},remaining.session)).status,403);
+  assert.equal((await request(`/users/${departing.user.id}`,'DELETE',{confirmEmail:departing.user.email},adminSession,{'X-CSRF-Token':''})).status,403);
+  assert.equal((await request(`/users/${admin.id}`,'DELETE',{confirmEmail:admin.email})).status,400);
+  const deleted=await request(`/users/${departing.user.id}`,'DELETE',{confirmEmail:departing.user.email});assert.equal(deleted.status,200);
+  const after=(await request(endpoint)).data;assert.deepEqual(after.items,before.items);assert.deepEqual(after.pallets,before.pallets);assert.equal(after.deletedItems.length,1);
+  assert.equal((await request('/shipments')).data.find(s=>s.id===shipment.id).ownerId,admin.id);assert.equal((await request('/users')).data.some(u=>u.id===departing.user.id),false);
+  assert.equal((await request('/shipments','GET',undefined,departing.session)).status,401);
+  assert.equal((await request('/auth/login','POST',{email:departing.user.email,password:'member-password-123'},null)).status,401);
+  const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  for(const table of ['sessions','shipment_access','column_preferences','edit_history'])assert.equal(connection.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE userId=?`).get(departing.user.id).n,0);
+  assert.equal(connection.prepare('SELECT userId FROM pallet_checks WHERE palletId=? LIMIT 1').get(pallets[0].id).userId,null);assert.equal(connection.prepare('SELECT deletedBy FROM deleted_items WHERE shipmentId=?').get(shipment.id).deletedBy,'');assert.deepEqual(connection.prepare('PRAGMA foreign_key_check').all(),[]);connection.close();
+  assert.equal(existsSync(path.join(dir,'uploads',path.basename(retainedPhoto))),false);assert.equal(existsSync(path.join(dir,'uploads',path.basename(livePhoto))),true);
+  assert.equal((await historyAction(endpoint,'redo',remaining.session)).status,200);assert.equal((await historyAction(endpoint,'undo',remaining.session)).status,200);
+  const board=(await request('/challenges','GET',undefined,remaining.session)).data;assert.equal(board.rows.some(r=>r.id===departing.user.id),false);assert.equal(board.rows.find(r=>r.id===remaining.user.id).palletKm,200);
+  await stop();await start();assert.equal((await request(endpoint)).data.pallets.length,2);assert.equal((await request(`/users/${departing.user.id}`,'DELETE',{confirmEmail:departing.user.email})).status,404);
 });

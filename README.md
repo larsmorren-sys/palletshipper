@@ -86,7 +86,7 @@ Open http://localhost:3001. The Node server serves both the interface and API. U
 
 ## Accounts and security
 
-Initial setup closes once an administrator exists. Administrators create accounts using **User management** and can change names, email addresses, roles, passwords and active status. Password resets, role changes and deactivation revoke existing sessions. At least one active administrator must remain. Accounts are deactivated rather than deleted.
+Initial setup closes once an administrator exists. Administrators create accounts using **User management** and can change names, email addresses, roles, passwords and active status. Password resets, role changes and deactivation revoke existing sessions. At least one active administrator must remain. Accounts can be deactivated or permanently deleted. In **User management**, administrators can select **Delete** beside a user and confirm by typing that account's email address. Deleting yourself or the last active administrator is blocked. Deletion removes the account, password hash, sessions, access assignments, view preferences and that user's undo history. Their shipments transfer to the administrator performing the deletion; contents, photos and tracking stay intact. Recorded transport arrivals and timestamps remain, with user attribution anonymized, including in other users' undo records. Their leaderboard entry disappears and rewards recalculate among remaining participants. Photo files retained solely by the removed user's undo history are cleaned up. This operation is not undoable.
 
 Click your account name to open **Account settings**. You can set an optional **Nickname**, enable or disable **Participate in the Transport Challenge**, or change your password in separate forms. Profile changes do not require a password change and do not affect your real account name, login or shipment permissions. The nickname is used in challenge rankings and reward winners; an empty nickname uses your account name. Nicknames need not be unique and are limited to 40 characters. Participation is off by default, including for existing accounts after the upgrade. Nonparticipating and inactive accounts are excluded from rankings and winning votes; normal tracking still works. Arrivals still count toward the transport distance pool. Recorded checks remain stored, so rejoining restores eligible scores and may change the current winners.
 
@@ -96,7 +96,7 @@ Passwords are stored as salted scrypt hashes. Session tokens are hashed in the d
 
 ## Shipments and access
 
-Administrators can see all shipments. Other users can see shipments they created or were assigned. Every user with shipment access can change all Shipment settings, including names/dates, addresses/distances, logos, access assignments, archiving/restoring and confirmed shipment deletion. Administrators and the creator retain their existing access. Revoking an assignment removes shipment access and management rights immediately. Account administration and global Challenge settings remain administrator-only. There is no separate read-only role.
+Administrators can see all shipments. Other users can see shipments they created or were assigned. Every user with shipment access can change all Shipment settings, including names/dates, addresses/distances, logos, access assignments, archiving/restoring and confirmed shipment deletion. Administrators and the shipment owner retain their existing access. Revoking an assignment removes shipment access and management rights immediately. Account administration and global Challenge settings remain administrator-only. There is no separate read-only role.
 
 Shipment settings also include:
 
@@ -119,7 +119,7 @@ When an input row has a quantity above 1, its individual items receive stable nu
 
 You can edit or delete items, assign them to units, search by name, number, code or note, and sort by name or order added. Both inline editing and the Edit dialog show the **full visible item name**, including any generated number. You can remove or replace that number. Visible names must be unique across the entire shipment, including different units, ignoring case, repeated whitespace and Unicode compatibility variants. The UI shows duplicate-name warnings and the server/database enforce uniqueness. Quantity-1 additions and imports reject duplicates atomically; generated quantity names skip occupied names. Edits preserve tracking and identity. Existing duplicate names are migrated to unique suffixes such as `(2)` and `(3)` without removing items or changing their tracking. Restore/undo refuses to introduce a conflicting name. API clients can use `displayName` to edit the full visible name; the legacy base-name field remains supported.
 
-Use **Transport overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires or the shipment is archived/deleted.
+Use **Transport overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires, the owning user account is deleted, or the shipment is archived/deleted.
 
 ## Edit mode, recent items and undo
 
@@ -133,7 +133,7 @@ On computers, the compact **hand button** beside Edit mode independently toggles
 
 In Pallet overview, selected pallets can be deleted together or have their contents moved to a destination pallet. **Move contents** preserves the source pallets, their photos and independent tracking. Pallets themselves are not nested. Deleting selected pallets moves their items to Unassigned. Bulk operations validate all row revisions and pallet contents before changing anything.
 
-**Duplicate** copies an item's description, code, note, extra columns and pallet assignment. The copy receives an available name such as `Lamp (copy)` or `Lamp (copy 2)`, a new identity and empty tracking; the original remains unchanged.
+**Duplicate** copies an item's description, code, note, extra columns and pallet assignment. The copy receives an available name such as `Lamp (copy)` or `Lamp (copy 2)`, a new identity and cleared tracking apart from the automatic Out warehouse check when assigned to a unit; the original remains unchanged.
 
 The sidebar includes:
 
@@ -155,6 +155,8 @@ Review column mapping, headers, descriptions and quantities before importing. Fu
 ## Tracking and pallet loading
 
 Item and pallet tracking are independent: checking a pallet never checks its items, and moving or deleting an item does not change pallet tracking.
+
+Newly assigning an item to a pallet, case, suitcase or Other unit automatically checks that **item's Out warehouse** stage. This applies to the ordinary selector, desktop dragging, bulk item moves, moving unit contents, and creating/importing/duplicating an assigned item. Existing Out warehouse timestamps and other item stages are preserved. Assigning to Unassigned does not clear tracking. Re-saving the same unit or changing metadata does not override a deliberate manual uncheck. Restore and undo/redo recover the saved tracking exactly; automatic assignment tracking is part of the move's undo action. Unit-level checkboxes and challenge points remain independent.
 
 In **Transport overview**, check **Out warehouse** when a pallet is loaded onto the truck. Search by pallet name and filter loaded or unloaded pallets. **View contents** opens its equipment and photos.
 

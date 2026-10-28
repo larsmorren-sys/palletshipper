@@ -10,7 +10,17 @@ export function installChallenges(app, db, auth) {
   }
   db.exec(`CREATE TABLE IF NOT EXISTS challenge_settings (id INTEGER PRIMARY KEY CHECK(id=1), shared INTEGER NOT NULL DEFAULT 0, warehouseAddress TEXT NOT NULL DEFAULT '');
     INSERT OR IGNORE INTO challenge_settings(id) VALUES(1);
-    CREATE TABLE IF NOT EXISTS pallet_checks(palletId TEXT NOT NULL REFERENCES pallets(id) ON DELETE CASCADE, stage TEXT NOT NULL, userId TEXT NOT NULL REFERENCES users(id), checkedAt TEXT NOT NULL, active INTEGER NOT NULL, PRIMARY KEY(palletId,stage));`);
+    CREATE TABLE IF NOT EXISTS pallet_checks(palletId TEXT NOT NULL REFERENCES pallets(id) ON DELETE CASCADE, stage TEXT NOT NULL, userId TEXT REFERENCES users(id) ON DELETE SET NULL, checkedAt TEXT NOT NULL, active INTEGER NOT NULL, PRIMARY KEY(palletId,stage));`);
+  if(db.prepare('PRAGMA table_info(pallet_checks)').all().find(column=>column.name==='userId').notnull || !db.prepare('PRAGMA foreign_key_list(pallet_checks)').all().some(key=>key.from==='userId'&&key.on_delete==='SET NULL')){
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`ALTER TABLE pallet_checks RENAME TO pallet_checks_legacy;
+        CREATE TABLE pallet_checks(palletId TEXT NOT NULL REFERENCES pallets(id) ON DELETE CASCADE, stage TEXT NOT NULL, userId TEXT REFERENCES users(id) ON DELETE SET NULL, checkedAt TEXT NOT NULL, active INTEGER NOT NULL, PRIMARY KEY(palletId,stage));
+        INSERT INTO pallet_checks SELECT * FROM pallet_checks_legacy;
+        DROP TABLE pallet_checks_legacy;
+        COMMIT;`);
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
   if (!db.prepare('PRAGMA table_info(challenge_settings)').all().some(c => c.name === 'warehouseCoordinates')) db.exec('ALTER TABLE challenge_settings ADD COLUMN warehouseCoordinates TEXT');
   // Upgrade previously automatic road distances; preserve all manual overrides.
   for (const shipment of db.prepare("SELECT * FROM shipments WHERE distanceSource='openrouteservice'").all()) {

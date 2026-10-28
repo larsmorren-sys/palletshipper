@@ -1,3 +1,4 @@
+import { assignmentStatuses } from './assignment-tracking.js';
 import { itemDisplayName, itemNameKey } from '../shared/item-names.js';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
@@ -178,7 +179,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     if(operation==='restore'&&auth.requireShipment(req.user,req.params.id).archivedAt)throw fail('Restore the shipment before restoring items.',409);
     req.editLabel=`${operation==='assign'?'Move':operation==='restore'?'Restore':'Delete'} ${records.length} item${records.length===1?'':'s'}`;
     for(const row of records){
-      if(operation==='assign')db.prepare('UPDATE items SET palletId=? WHERE id=?').run(palletId,row.id);
+      if(operation==='assign')db.prepare('UPDATE items SET palletId=?,statuses=? WHERE id=?').run(palletId,assignmentStatuses(row.statuses,palletId,row.palletId),row.id);
       else if(operation==='delete'){trash(row,req.user.id);db.prepare('DELETE FROM items WHERE id=?').run(row.id);}
       else {
         const item=JSON.parse(row.content);
@@ -201,7 +202,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     for(const item of contents){const expected=req.body.items.find(e=>e.id===item.id);if(!expected||expected.revision!==itemView(item).revision)throw fail('Pallet contents changed. Refresh and try again.',409);}
     req.editLabel=`${operation==='delete'?'Delete':'Move contents of'} ${records.length} unit${records.length===1?'':'s'}`;
     for(const pallet of records){
-      db.prepare('UPDATE items SET palletId=? WHERE palletId=?').run(palletId,pallet.id);
+      for(const item of contents.filter(i=>i.palletId===pallet.id))db.prepare('UPDATE items SET palletId=?,statuses=? WHERE id=?').run(palletId,assignmentStatuses(item.statuses,palletId,item.palletId),item.id);
       if(operation==='delete'){db.prepare('DELETE FROM pallet_photos WHERE palletId=?').run(pallet.id);db.prepare('DELETE FROM pallets WHERE id=?').run(pallet.id);}
     }
     res.json({ok:true,affected:records.length});
@@ -210,7 +211,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     const item=db.prepare('SELECT * FROM items WHERE id=?').get(req.params.id);
     if(!item)throw fail('Item not found.',404);
     auth.requireShipment(req.user,item.shipmentId);checkRevision(req.body,itemView(item).revision);
-    const copy={...item,id:randomUUID(),name:`${itemDisplayName(item)} (copy)`,statuses:'{}',autoNumbered:0,createdOrder:stamp(),imported:0};
+    const copy={...item,id:randomUUID(),name:`${itemDisplayName(item)} (copy)`,statuses:assignmentStatuses('{}',item.palletId),autoNumbered:0,createdOrder:stamp(),imported:0};
     let suffix=2;while(db.prepare('SELECT id FROM items WHERE shipmentId=? AND nameKey=?').get(item.shipmentId,itemNameKey(copy)))copy.name=`${itemDisplayName(item)} (copy ${suffix++})`;
     copy.nameKey=uniqueName(copy);
     const last=db.prepare('SELECT lastNumber FROM item_sequences WHERE shipmentId=? AND nameKey=?').get(item.shipmentId,objectNameKey(item.name))?.lastNumber||0;
@@ -220,5 +221,16 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     req.editLabel=`Duplicate ${itemView(item).displayName}`;
     res.status(201).json(itemView(copy));
   });
-  return {trash,purge,stamp,uniqueName,deleted:id=>db.prepare('SELECT * FROM deleted_items WHERE shipmentId=? ORDER BY rowid DESC LIMIT 200').all(id).map(row=>({...itemView(JSON.parse(row.content)),deletedAt:row.deletedAt,revision:revision(row)})),recent:(id,importedOnly=false)=>db.prepare(`SELECT * FROM items WHERE shipmentId=? ${importedOnly?'AND imported=1':''} ORDER BY createdOrder DESC LIMIT 200`).all(id).map(itemView)};
+  function prepareUserDeletion(userId) {
+    const removed=db.prepare('SELECT changes FROM edit_history WHERE userId=?').all(userId);
+    db.prepare('DELETE FROM edit_history WHERE userId=?').run(userId);
+    for(const entry of db.prepare('SELECT id,changes FROM edit_history').all()){
+      const changes=JSON.parse(entry.changes);let changed=false;
+      for(const change of changes)if(change.table==='pallet_checks')for(const side of ['before','after'])if(change[side]?.userId===userId){change[side].userId=null;changed=true;}
+      if(changed)db.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),entry.id);
+    }
+    db.prepare("UPDATE deleted_items SET deletedBy='' WHERE deletedBy=?").run(userId);
+    return ()=>cleanup(photoUrls(removed));
+  }
+  return {trash,purge,stamp,uniqueName,prepareUserDeletion,deleted:id=>db.prepare('SELECT * FROM deleted_items WHERE shipmentId=? ORDER BY rowid DESC LIMIT 200').all(id).map(row=>({...itemView(JSON.parse(row.content)),deletedAt:row.deletedAt,revision:revision(row)})),recent:(id,importedOnly=false)=>db.prepare(`SELECT * FROM items WHERE shipmentId=? ${importedOnly?'AND imported=1':''} ORDER BY createdOrder DESC LIMIT 200`).all(id).map(itemView)};
 }

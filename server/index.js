@@ -1,3 +1,5 @@
+import { assignmentStatuses } from './assignment-tracking.js';
+import { installUserDeletion } from './user-deletion.js';
 import { itemDisplayName, itemNameKey } from '../shared/item-names.js';
 import { unitTypes, unitTypeLabel } from '../shared/transport-units.js';
 import { revision, checkRevision } from './revisions.js';
@@ -92,6 +94,7 @@ db.exec('CREATE TABLE IF NOT EXISTS item_sequences (shipmentId TEXT NOT NULL REF
 const reserveNumber = db.prepare('INSERT INTO item_sequences VALUES (?, ?, ?) ON CONFLICT(shipmentId,nameKey) DO UPDATE SET lastNumber=MAX(lastNumber,excluded.lastNumber)');
 for (const item of db.prepare('SELECT shipmentId, name, instanceNumber FROM items').all()) reserveNumber.run(item.shipmentId, objectNameKey(item.name), item.instanceNumber);
 const editor = installEditing(app, db, auth, dataDir, palletView, itemView);
+installUserDeletion(app, db, editor);
 app.get('/api/health', (_, res) => res.json({ ok: true }));
 app.get('/api/shipments', (req, res) => {
   const rows = req.user.role === 'admin' ? db.prepare('SELECT * FROM shipments ORDER BY createdAt DESC').all() : db.prepare('SELECT * FROM shipments s WHERE s.ownerId=? OR EXISTS (SELECT 1 FROM shipment_access a WHERE a.shipmentId=s.id AND a.userId=?) ORDER BY createdAt DESC').all(req.user.id, req.user.id);
@@ -268,7 +271,7 @@ app.post('/api/shipments/:id/items', (req, res) => {
       const nameKey=editor.uniqueName(candidate);
       numbers.set(key, number);
       reserveNumber.run(req.params.id, key, number);
-      insert.run(randomUUID(), req.params.id, row.palletId, row.name, row.code, row.note, '{}', number, candidate.autoNumbered, JSON.stringify(row.extraFields), editor.stamp(), Number(req.body.source === 'import'),nameKey);
+      insert.run(randomUUID(), req.params.id, row.palletId, row.name, row.code, row.note, assignmentStatuses('{}', row.palletId), number, candidate.autoNumbered, JSON.stringify(row.extraFields), editor.stamp(), Number(req.body.source === 'import'),nameKey);
     }
     db.exec('RELEASE mutation');
   } catch (error) { db.exec('ROLLBACK TO mutation; RELEASE mutation'); throw error; }
@@ -308,6 +311,7 @@ app.patch('/api/items/:id', (req, res) => {
     const last = db.prepare('SELECT lastNumber FROM item_sequences WHERE shipmentId=? AND nameKey=?').get(item.shipmentId, objectNameKey(updated.name))?.lastNumber || 0;
     if (updated.instanceNumber <= last) updated.instanceNumber = last + 1;
   }
+  updated.statuses=assignmentStatuses(updated.statuses,updated.palletId,item.palletId);
   updated.nameKey=editor.uniqueName(updated);
   db.exec('SAVEPOINT mutation');
   try {
