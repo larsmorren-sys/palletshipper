@@ -1285,3 +1285,33 @@ test('Shared columns survive empty shipments and undo cannot hide another userâ€
   assert.equal((await request(`${endpoint}/items`,'POST',{rows:[{name:'Too many',extraFields:fields}]})).status,400);
   assert.deepEqual((await detail()).extraColumns,['Department']);
 });
+
+test('Deleting a shared column removes all active values, checks access and revisions, and supports undo/redo',async()=>{
+  const {endpoint,detail}=await editFixture('Delete shared column');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'First',extraFields:[{label:'Colour',value:'Blue'},{label:'Weight',value:'2 kg'}]},{name:'Second',extraFields:[{label:'Colour',value:'Red'}]}]});
+  let data=await detail();const initial=data;
+  const member=await createMember('column-delete-denied@example.test');
+  const body={label:'Colour',confirmLabel:'Colour',revision:data.extraColumnsRevision};
+  assert.equal((await request(`${endpoint}/item-columns`,'DELETE',body,member.session)).status,404);
+  assert.equal((await request(`${endpoint}/item-columns`,'DELETE',{...body,confirmLabel:'Wrong'})).status,400);
+  const first=data.items[0];await request(`/items/${first.id}`,'PATCH',{revision:first.revision,extraFields:[{label:'Colour',value:'Green'},{label:'Weight',value:'2 kg'}]});
+  assert.equal((await request(`${endpoint}/item-columns`,'DELETE',body)).status,409);
+  data=await detail();const before=data;
+  assert.equal((await request(`${endpoint}/item-columns`,'DELETE',{...body,revision:data.extraColumnsRevision})).status,200);
+  data=await detail();assert.deepEqual(data.extraColumns,['Weight']);assert.ok(data.items.every(i=>i.extraFields.every(f=>f.label!=='Colour')));assert.equal(data.items.find(i=>i.id===first.id).extraFields[0].value,'2 kg');
+  assert.equal((await historyAction(endpoint)).status,200);data=await detail();assert.deepEqual(data.items,before.items);assert.deepEqual(data.extraColumns,before.extraColumns);
+  assert.equal((await historyAction(endpoint,'redo')).status,200);data=await detail();assert.deepEqual(data.extraColumns,['Weight']);
+  assert.equal(data.items.length,initial.items.length);
+});
+
+test('Renaming shared columns preserves values and trash, validates unique names and supports undo/redo',async()=>{
+  const {endpoint,detail}=await editFixture('Rename columns');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Active',extraFields:[{label:'Colour',value:'Blue'},{label:'Size',value:'Large'}]},{name:'Trashed',extraFields:[{label:'Colour',value:'Red'}]}]});
+  let data=await detail();const trash=data.items.find(i=>i.displayName==='Trashed');await request(`/items/${trash.id}`,'DELETE',{revision:trash.revision});data=await detail();const before=data;
+  assert.equal((await request(`${endpoint}/item-columns`,'PATCH',{label:'Colour',name:' size ',revision:data.extraColumnsRevision})).status,400);
+  assert.equal((await request(`${endpoint}/item-columns`,'PATCH',{label:'Colour',name:'Finish',revision:data.extraColumnsRevision})).status,200);
+  data=await detail();assert.deepEqual(data.extraColumns,['Finish','Size']);assert.equal(data.items[0].extraFields[0].value,'Blue');assert.equal(data.deletedItems[0].extraFields[0].label,'Finish');assert.equal(data.deletedItems[0].extraFields[0].value,'Red');
+  assert.equal((await historyAction(endpoint)).status,200);assert.deepEqual((await detail()).items,before.items);
+  assert.equal((await historyAction(endpoint,'redo')).status,200);data=await detail();assert.equal(data.items[0].extraFields[0].label,'Finish');
+  const deleted=data.deletedItems[0];assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries([deleted])})).status,200);data=await detail();assert.equal(data.items.find(i=>i.displayName==='Trashed').extraFields[0].value,'Red');
+});

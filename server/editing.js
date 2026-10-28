@@ -53,6 +53,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     for(const change of changes)for(const side of ['before','after']){
       const row=change[side];if(!row)continue;
       if(change.table==='pallets'){if(row.type===undefined){row.type='pallet';migrated=true;}if(row.otherType===undefined){row.otherType='';migrated=true;}}
+      if(change.table==='item_columns'&&row.aliases===undefined){row.aliases='[]';migrated=true;}
       if(change.table==='items'&&row.nameKey===undefined){row.nameKey=itemNameKey(row);migrated=true;}
     }
     if(migrated)db.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),entry.id);
@@ -87,7 +88,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
   // Synchronous edit routes run in one outer savepoint, including their undo record.
   app.use('/api', (req,res,next)=>{
     const input=req.body||{};
-    const match=req.path.match(/^\/shipments\/([^/]+)\/(items|pallets)(?:\/bulk)?$/);
+    const match=req.path.match(/^\/shipments\/([^/]+)\/(items|pallets|item-columns)(?:\/bulk)?$/);
     const entity=req.path.match(/^\/(items|pallets)\/([^/]+)(?:\/duplicate)?$/);
     if (!['POST','PATCH','DELETE'].includes(req.method) || !match && !entity) return next();
     const id=match?.[1] || db.prepare(`SELECT shipmentId FROM ${entity[1]} WHERE id=?`).get(entity[2])?.shipmentId;

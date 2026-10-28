@@ -99,7 +99,7 @@ export function installExports(app, db, auth) {
     }
     const columns = auth.getColumns(req.user.id, shipment.id);
     const tracking = stages.filter(([key]) => columns[key]);
-    const extraLabels = db.prepare('SELECT label FROM item_columns WHERE shipmentId=? ORDER BY rowid').all(shipment.id).map(row=>row.label);
+    const extraLabels = db.prepare('SELECT label FROM item_columns WHERE shipmentId=? ORDER BY position,id').all(shipment.id).map(row=>row.label);
     const headers = ['Shipment', 'Pallet / transport unit', 'Item', 'Item code', 'Quantity', 'Note', 'Unit type', ...extraLabels, ...tracking.map(([,label]) => label)];
     const groupRows = group => group.items.map(item => [shipment.name, group.name, item.displayName, item.code, 1, item.note, group.id ? unitTypeLabel(group) : '', ...extraLabels.map(label=>item.extraFields.find(field=>field.label===label)?.value || ''), ...tracking.map(([key]) => formatDate(item.statuses[key]))]);
     const rows = groups.flatMap(groupRows);

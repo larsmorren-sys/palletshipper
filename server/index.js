@@ -97,6 +97,18 @@ for (const item of db.prepare('SELECT shipmentId, name, instanceNumber FROM item
 const editor = installEditing(app, db, auth, dataDir, palletView, itemView);
 const itemColumns = installItemColumns(db);
 installUserDeletion(app, db, editor);
+app.patch('/api/shipments/:id/item-columns',(req,res)=>{
+  requireShipment(req.user,req.params.id);
+  itemColumns.rename(req.params.id,req.body);
+  req.editLabel=`Rename column ${req.body.label} to ${req.body.name.trim()}`;
+  res.json({ok:true});
+});
+app.delete('/api/shipments/:id/item-columns',(req,res)=>{
+  requireShipment(req.user,req.params.id);
+  itemColumns.remove(req.params.id,req.body);
+  req.editLabel=`Delete column ${req.body.label}`;
+  res.json({ok:true});
+});
 app.get('/api/health', (_, res) => res.json({ ok: true }));
 app.get('/api/shipments', (req, res) => {
   const rows = req.user.role === 'admin' ? db.prepare('SELECT * FROM shipments ORDER BY createdAt DESC').all() : db.prepare('SELECT * FROM shipments s WHERE s.ownerId=? OR EXISTS (SELECT 1 FROM shipment_access a WHERE a.shipmentId=s.id AND a.userId=?) ORDER BY createdAt DESC').all(req.user.id, req.user.id);
@@ -170,7 +182,7 @@ app.delete('/api/shipments/:id', (req, res) => {
 });
 app.get('/api/shipments/:id', (req, res) => {
   requireShipment(req.user, req.params.id);
-  res.json({ extraColumns:itemColumns.columns(req.params.id), hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY createdOrder').all(req.params.id).map(itemView), lastAdded: editor.recent(req.params.id), lastImported: editor.recent(req.params.id,true), deletedItems: editor.deleted(req.params.id) });
+  res.json({ extraColumns:itemColumns.columns(req.params.id), extraColumnsRevision:itemColumns.version(req.params.id), hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY createdOrder').all(req.params.id).map(itemView), lastAdded: editor.recent(req.params.id), lastImported: editor.recent(req.params.id,true), deletedItems: editor.deleted(req.params.id) });
 });
 function unitFields(body, current={type:'pallet',otherType:''}) {
   const type=body.type===undefined?current.type:body.type;
