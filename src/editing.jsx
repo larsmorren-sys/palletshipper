@@ -47,8 +47,7 @@ function useInlineAutosave({draft,dirty,valid,disabled,onSave}) {
   return {state,save,onBlur:event=>{if(event.target.matches('input,textarea,select'))save();}};
 }
 function AutosaveStatus({auto,disabled}) {
-  if(auto.state!=='error')return null;
-  return <div className="inline-save"><span role="status">Could not save. Your changes are kept.</span>{auto.state==='error'&&<button className="secondary" disabled={disabled} onClick={auto.save}>Retry</button>}</div>;
+  return <div className="inline-status-slot">{auto.state==='error'&&<><span role="status">Could not save. Your changes are kept.</span><button className="secondary" disabled={disabled} onClick={auto.save}>Retry</button></>}</div>;
 }
 
 export function InlinePalletName({ pallet, onSave, disabled, onDirty }) {
