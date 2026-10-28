@@ -113,7 +113,7 @@ function App({ user, logout, refresh }) {
     document.addEventListener('visibilitychange', synchronize);
     return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', synchronize); document.removeEventListener('visibilitychange', synchronize); };
   }, [selected, busy, modal, loading, editMode, dragMode]);
-  function choosePallet(id) { if(dirtyRows.length){setError('Wait for automatic saving or cancel edited rows before changing the view.');return;}if(id==='deleted')setDragMode(false);setPallet(id); }
+  function choosePallet(id) { if(dirtyRows.length){setError('Wait for saving to finish. Resolve invalid entries or retry failed saves before changing the view.');return;}if(id==='deleted')setDragMode(false);setPallet(id); }
   function changeShipment(id) { setError('');if(id&&id!==selected)setLoading(true);setDragMode(false);setEditMode(false);setDirtyRows([]);setPalletSearch(''); const url = new URL(window.location.href); url.searchParams.delete('shipment'); url.searchParams.delete('pallet'); window.history.replaceState(null, '', url); setSelected(id); setPallet('all'); setSearch(''); }
   function toggleArchiveView(archived) {
     setShowArchived(archived); changeShipment(shipments.find(s => !!s.archivedAt === archived)?.id || '');

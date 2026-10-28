@@ -44,11 +44,11 @@ function useInlineAutosave({draft,dirty,valid,disabled,onSave}) {
       setState(result===false?'error':'saved');
     }).finally(()=>{pending.current=false;});
   };
-  return {state,save,onBlur:event=>{if(event.target.matches('input,textarea,select')&&!event.relatedTarget?.closest('[data-cancel-inline]'))save();}};
+  return {state,save,onBlur:event=>{if(event.target.matches('input,textarea,select'))save();}};
 }
-function AutosaveStatus({auto,dirty,disabled,onCancel}) {
-  if(!dirty&&auto.state!=='saved')return null;
-  return <div className="inline-save"><span role="status">{auto.state==='saving'?'Saving…':auto.state==='error'?'Could not save. Your changes are kept.':dirty?'Saves when you leave the field':'Saved'}</span>{auto.state==='error'&&<button className="secondary" disabled={disabled} onClick={auto.save}>Retry</button>}{dirty&&<button className="secondary" data-cancel-inline disabled={disabled||auto.state==='saving'} onClick={onCancel}>Cancel</button>}</div>;
+function AutosaveStatus({auto,dirty,disabled}) {
+  if(auto.state==='idle'||dirty&&auto.state==='saved')return null;
+  return <div className="inline-save"><span role="status">{auto.state==='saving'?'Saving…':auto.state==='error'?'Could not save. Your changes are kept.':'Saved'}</span>{auto.state==='error'&&<button className="secondary" disabled={disabled} onClick={auto.save}>Retry</button>}</div>;
 }
 
 export function InlinePalletName({ pallet, onSave, disabled, onDirty }) {
@@ -59,7 +59,7 @@ export function InlinePalletName({ pallet, onSave, disabled, onDirty }) {
   const dirty=JSON.stringify(draft)!==JSON.stringify(initial());
   useEffect(()=>{onDirty(`pallet:${pallet.id}`,dirty);return()=>onDirty(`pallet:${pallet.id}`,false);},[dirty,pallet.id]);
   const auto=useInlineAutosave({draft,dirty,valid:!!draft.name.trim()&&(draft.type!=='other'||!!draft.otherType.trim()),disabled,onSave:async()=>{const saved=await onSave(pallet,draft);if(saved!==false)setDraft(current=>JSON.stringify(current)===JSON.stringify(draft)?{name:saved.name,type:saved.type||'pallet',otherType:saved.otherType||''}:current);return saved;}});
-  return <div className="inline-name" onBlur={auto.onBlur}><input aria-label={`Name: ${pallet.name}`} value={draft.name} maxLength={200} disabled={disabled} onChange={e=>setDraft(d=>({...d,name:e.target.value}))}/><UnitTypeFields value={draft} onChange={setDraft} disabled={disabled}/><AutosaveStatus auto={auto} dirty={dirty} disabled={disabled} onCancel={()=>setDraft(initial())}/></div>;
+  return <div className="inline-name" onBlur={auto.onBlur}><input aria-label={`Name: ${pallet.name}`} value={draft.name} maxLength={200} disabled={disabled} onChange={e=>setDraft(d=>({...d,name:e.target.value}))}/><UnitTypeFields value={draft} onChange={setDraft} disabled={disabled}/><AutosaveStatus auto={auto} dirty={dirty} disabled={disabled}/></div>;
 }
 
 function InlineItemFields({ item, allItems, onSave, disabled, onDirty }) {
@@ -72,7 +72,7 @@ function InlineItemFields({ item, allItems, onSave, disabled, onDirty }) {
   const conflict=conflictingItem(allItems,draft.displayName,item.id);
   const change=(key,value)=>setDraft(d=>({...d,[key]:value}));
   const auto=useInlineAutosave({draft,dirty,valid:!!draft.displayName.trim()&&!conflict,disabled,onSave:async()=>{const saved=await onSave(item,draft);if(saved!==false)setDraft(current=>JSON.stringify(current)===JSON.stringify(draft)?{displayName:saved.displayName,code:saved.code,note:saved.note,extraFields:saved.extraFields||[]}:current);return saved;}});
-  return <div className="inline-item" onBlur={auto.onBlur}><input aria-label={`Name: ${item.displayName}`} maxLength={210} value={draft.displayName} disabled={disabled} aria-invalid={!!conflict} onChange={e=>change('displayName',e.target.value)}/><input aria-label={`Code: ${item.displayName}`} maxLength={200} value={draft.code} placeholder="Item code" disabled={disabled} onChange={e=>change('code',e.target.value)}/><textarea aria-label={`Note: ${item.displayName}`} maxLength={1000} rows={1} value={draft.note} placeholder="Note" disabled={disabled} onChange={e=>change('note',e.target.value)}/>{draft.extraFields.map((field,index)=><label className="inline-extra" key={index}>{field.label}<input value={field.value} maxLength={1000} aria-label={`${field.label}: ${item.displayName}`} disabled={disabled} onChange={e=>change('extraFields',draft.extraFields.map((f,i)=>i===index?{...f,value:e.target.value}:f))}/></label>)}{conflict&&<p className="inline-name-error" role="alert">This name already exists in this shipment. Choose a unique name.</p>}<AutosaveStatus auto={auto} dirty={dirty} disabled={disabled} onCancel={()=>setDraft(initial())}/></div>;
+  return <div className="inline-item" onBlur={auto.onBlur}><input aria-label={`Name: ${item.displayName}`} maxLength={210} value={draft.displayName} disabled={disabled} aria-invalid={!!conflict} onChange={e=>change('displayName',e.target.value)}/><input aria-label={`Code: ${item.displayName}`} maxLength={200} value={draft.code} placeholder="Item code" disabled={disabled} onChange={e=>change('code',e.target.value)}/><textarea aria-label={`Note: ${item.displayName}`} maxLength={1000} rows={1} value={draft.note} placeholder="Note" disabled={disabled} onChange={e=>change('note',e.target.value)}/>{draft.extraFields.map((field,index)=><label className="inline-extra" key={index}>{field.label}<input value={field.value} maxLength={1000} aria-label={`${field.label}: ${item.displayName}`} disabled={disabled} onChange={e=>change('extraFields',draft.extraFields.map((f,i)=>i===index?{...f,value:e.target.value}:f))}/></label>)}{conflict&&<p className="inline-name-error" role="alert">This name already exists in this shipment. Choose a unique name.</p>}<AutosaveStatus auto={auto} dirty={dirty} disabled={disabled}/></div>;
 }
 
 export function ItemTable({ items,allItems,pallets,visibleStages,editMode,dragMode,deleted,busy,onSave,onPatch,onDelete,onEdit,onDuplicate,onBulk,onDirty,selectionKey,dirtyRows=[],archived }) {
