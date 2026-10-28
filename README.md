@@ -115,30 +115,36 @@ Use **Add unit** or **Add transport units** to add 1 to 200 units of one type at
 
 Customize the **Prefix** and **Postfix** around the automatic number, for example `Stage 1 London`. A preview shows the first and last names. Numbers continue for the same prefix/postfix combination within a shipment. The default prefix is `Pallet`; empty prefix and postfix fields produce numeric names.
 
-When an input row has a quantity above 1, its individual items receive stable numbers, for example `LED screen 1` and `LED screen 2`. Quantity 1 keeps the exact name without adding a suffix. Previously numbered items keep their existing names. Numbers remain reserved across deletion, duplication and undo; moving or restoring an item does not renumber it.
+When an input row has a quantity above 1, its individual items receive stable numbers, for example `LED screen 1` and `LED screen 2`. Quantity 1 keeps the exact name without adding a suffix. Previously numbered items keep their existing names unless they conflict with another visible name. Numbers remain reserved across deletion, duplication and undo; moving or restoring an item does not renumber it.
 
-You can edit or delete items, assign them to pallets, search by name, number, code or note, and sort by name or order added. Renaming preserves tracking; if a number conflicts under the new description, the next available number is assigned.
+You can edit or delete items, assign them to units, search by name, number, code or note, and sort by name or order added. Both inline editing and the Edit dialog show the **full visible item name**, including any generated number. You can remove or replace that number. Visible names must be unique across the entire shipment, including different units, ignoring case, repeated whitespace and Unicode compatibility variants. The UI shows duplicate-name warnings and the server/database enforce uniqueness. Quantity-1 additions and imports reject duplicates atomically; generated quantity names skip occupied names. Edits preserve tracking and identity. Existing duplicate names are migrated to unique suffixes such as `(2)` and `(3)` without removing items or changing their tracking. Restore/undo refuses to introduce a conflicting name. API clients can use `displayName` to edit the full visible name; the legacy base-name field remains supported.
 
 Use **Transport overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires or the shipment is archived/deleted.
 
 ## Edit mode, recent items and undo
 
-Use **Edit mode** in either Items or Pallet overview. Edit item names, codes, notes and extra field values directly in the existing rows; pallet names are editable in Pallet overview. Each changed row has **Save** and **Cancel**. Save or cancel drafts before leaving the view or starting another operation. Selection checkboxes and **Select all visible** apply to the current search/filter, not hidden rows.
+Use **Edit mode** in either Items or Transport overview. Edit item names, codes, notes and extra field values directly in the existing rows; unit names and types are editable in Transport overview. Each changed row has **Save** and **Cancel**. Save or cancel drafts before leaving the view or starting another operation. Selection checkboxes and **Select all visible** apply to the current search/filter, not hidden rows.
 
-Select items to **Move to unit…** or **Delete selected**. The destination picker supports searching and scrolling, including hundreds of pallets. On desktop or tablet, drag the grip beside an item onto a highlighted pallet in the sidebar or destination panel. Dragging a selected row moves the visible selection; dragging another row moves that row. Grips support touch without preventing normal page scrolling elsewhere; the page and destination lists scroll near their edges. Tap **Move to unit…** as an alternative to dragging. Escape cancels a drag. Use the sidebar's pallet search to find destinations quickly.
+Select items to **Move to unit…** or **Delete selected**. Multiselect and **Select all visible** work in both Edit mode and drag-and-drop mode. The destination picker supports searching and scrolling, including hundreds of units.
+
+On computers, the compact **hand button** beside Edit mode independently toggles **Drag-and-drop mode**. Editing and dragging are separate modes. Hover the item name to get a grab cursor and drag directly by its name; there is no separate grip. Dragging a selected row moves the visible selection; dragging another row moves only that row. **Choose a destination** opens immediately on enabling the mode and stays fixed on the right while scrolling. The dock reserves its own space, supports search and scrolling, and can also move selected items by clicking a destination. Close it via its × button or the hand toggle. Escape cancels an in-progress drag.
+
+**Dragging is disabled on phones and tablets, including iPads with desktop user agents.** The hand toggle is disabled on touch-capable/coarse-pointer devices. Use **Edit mode → select items → Move to unit…** there; multiselect and tapping a destination remain available. Read-only item names do not intercept touch scrolling.
 
 In Pallet overview, selected pallets can be deleted together or have their contents moved to a destination pallet. **Move contents** preserves the source pallets, their photos and independent tracking. Pallets themselves are not nested. Deleting selected pallets moves their items to Unassigned. Bulk operations validate all row revisions and pallet contents before changing anything.
 
-**Duplicate** copies an item's description, code, note, extra columns and pallet assignment. The copy is a single unnumbered item with new identity and empty tracking; the original remains unchanged.
+**Duplicate** copies an item's description, code, note, extra columns and pallet assignment. The copy receives an available name such as `Lamp (copy)` or `Lamp (copy 2)`, a new identity and empty tracking; the original remains unchanged.
 
 The sidebar includes:
 
-- **Last imported**: the latest 200 currently present imported items, newest first. This starts recording with imports made after this upgrade; old records have no reliable import provenance. Manual additions and duplicates do not appear here. Restoring an item retains its original import order.
+- **Last added**: the latest 200 currently present items, newest first, including imports, manual additions and duplicates. Existing items are included using their stored creation order. Editing or moving does not change this order; restoring keeps the original creation order. The API exposes `lastAdded`; the import-only `lastImported` field remains for older clients.
 - **Last deleted**: up to 200 deleted items per shipment, newest first. Restore one or select multiple to recover their identities, tracking and extra columns. If the original pallet no longer exists, restored items go to Unassigned. This list is shared by users with shipment access.
 
 **Undo** and **Redo** show the next action's name and a confirmation after applying it. Each user has their own persistent history of up to 50 item/pallet actions per shipment, including additions/imports, edits, moves, tracking, duplication, deletion and restoration. A bulk operation is one action. A new action clears that user's redo branch. Undo never reuses reserved item numbers and rejects changes if another action has modified affected records or added dependent content. This prevents overwriting colleagues' work. Photo uploads/deletions, logo/account/access/settings changes and shipment deletion/archiving are not undoable. This limited history is not a complete audit log.
 
 **Successful archiving permanently clears the shipment's recycle bin and every user's undo/redo history.** A failed archive preserves them. Restoring a shipment does not bring the bin or history back. Archived shipments do not retain deleted items or new undo actions; deleting from an archive requires explicit permanent-deletion confirmation. The UI also checks for archive-state changes during editing; restore the shipment before making recoverable edits.
+
+The initial page and shipment switches show a single loading screen until the shipment list and selected shipment contents are ready. Session loading uses the same screen; login forms and partially populated workspace panels do not flash during authenticated startup. Failed detail loads show a retry action.
 
 ## Import equipment
 
@@ -193,7 +199,7 @@ Permanent shipment deletion requires typing its exact name. It removes pallets, 
 
 ## Collaboration
 
-The active shipment refreshes every five seconds and when returning to the window. Refresh pauses during forms, local changes and Edit mode to protect drafts. Leaving Edit mode reloads the current data. Item, pallet and shipment edits and deletions send their read version: stale operations are rejected and the current data is retrieved. Review the latest data and try again after a conflict. API clients must send `revision` to enable this check. Pallet checks record the original user and timestamp for challenge credit. A full change audit log and item-check attribution are not implemented.
+The active shipment refreshes every five seconds and when returning to the window. Refresh pauses during forms, local changes, Edit mode and drag-and-drop mode to protect drafts. Leaving Edit mode reloads the current data. Item, pallet and shipment edits and deletions send their read version: stale operations are rejected and the current data is retrieved. Review the latest data and try again after a conflict. API clients must send `revision` to enable this check. Pallet checks record the original user and timestamp for challenge credit. A full change audit log and item-check attribution are not implemented.
 
 ## Deploy on Railway
 

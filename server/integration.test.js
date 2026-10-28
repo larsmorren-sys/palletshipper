@@ -170,16 +170,16 @@ test('Item numbering continues per name across additions, imports and pallet cha
   const shipment = (await request('/shipments', 'POST', { name: 'Objectnummering' })).data;
   const endpoint = `/shipments/${shipment.id}`;
   await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'LED-scherm', quantity: 2 }, { name: 'Kabel', quantity: 1 }] });
-  await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'LED-scherm', quantity: 1 }, { name: 'LED-scherm', quantity: 2 }, { name: 'Kabel', quantity: 1 }] });
+  await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'LED-scherm', quantity: 1 }, { name: 'LED-scherm', quantity: 2 }, { name: 'Kabel extra', quantity: 1 }] });
   const data = (await request(endpoint)).data;
-  assert.deepEqual(data.items.map(i => i.displayName), ['LED-scherm 1', 'LED-scherm 2', 'Kabel', 'LED-scherm', 'LED-scherm 4', 'LED-scherm 5', 'Kabel']);
+  assert.deepEqual(data.items.map(i => i.displayName), ['LED-scherm 1', 'LED-scherm 2', 'Kabel', 'LED-scherm', 'LED-scherm 4', 'LED-scherm 5', 'Kabel extra']);
   assert.equal(data.items[0].name, 'LED-scherm');
   const pallet = (await request(`${endpoint}/pallets`, 'POST', { quantity: 1 })).data;
   assert.equal((await request(`/items/${data.items[0].id}`, 'PATCH', { palletId: pallet.id })).data.displayName, 'LED-scherm 1');
   await stop(); await start();
   assert.deepEqual((await request(endpoint)).data.items.map(i => i.displayName), data.items.map(i => i.displayName));
-  await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'led-scherm', quantity: 1 }] });
-  assert.equal((await request(endpoint)).data.items.at(-1).instanceNumber, 6);
+  assert.equal((await request(`${endpoint}/items`, 'POST', { rows: [{ name: 'led-scherm', quantity: 1 }] })).status,400);
+  assert.equal((await request(endpoint)).data.items.length,7);
   const other = (await request('/shipments', 'POST', { name: 'Andere objectnummering' })).data;
   await request(`/shipments/${other.id}/items`, 'POST', { rows: [{ name: 'LED-scherm' }] });
   assert.equal((await request(`/shipments/${other.id}`)).data.items[0].displayName, 'LED-scherm');
@@ -914,7 +914,7 @@ test('Single names stay unnumbered, custom import columns survive duplicates, ed
   let data=await detail();assert.deepEqual(data.items.map(i=>i.displayName),['Cable 19','Fixture 1','Fixture 2']);assert.deepEqual(data.lastImported.map(i=>i.displayName),['Fixture 2','Fixture 1','Cable 19']);
   const original=data.items[0];
   const tracked=(await request(`/items/${original.id}`,'PATCH',{status:'inLocation',checked:true,revision:original.revision})).data;
-  const copy=await request(`/items/${original.id}/duplicate`,'POST',{revision:tracked.revision});assert.equal(copy.status,201);assert.deepEqual(copy.data.statuses,{});assert.deepEqual(copy.data.extraFields,fields);assert.equal(copy.data.displayName,'Cable 19');
+  const copy=await request(`/items/${original.id}/duplicate`,'POST',{revision:tracked.revision});assert.equal(copy.status,201);assert.deepEqual(copy.data.statuses,{});assert.deepEqual(copy.data.extraFields,fields);assert.equal(copy.data.displayName,'Cable 19 (copy)');
   const edited=(await request(`/items/${original.id}`,'PATCH',{extraFields:[{label:'Weight',value:'14 kg'}],revision:tracked.revision})).data;
   assert.equal((await request(`/items/${original.id}`,'DELETE',{revision:edited.revision})).status,200);
   data=await detail();assert.equal(data.deletedItems.length,1);assert.deepEqual(data.deletedItems[0].statuses,tracked.statuses);assert.equal(data.lastImported.some(i=>i.id===original.id),false);
@@ -1105,4 +1105,69 @@ test('Existing undo records without unit type fields remain usable after upgradi
   await stop();await start();
   assert.equal((await historyAction(endpoint)).status,200);assert.equal((await detail()).pallets[0].name,'Pallet 1');assert.equal((await detail()).pallets[0].type,'pallet');
   assert.equal((await historyAction(endpoint,'redo')).status,200);assert.equal((await detail()).pallets[0].name,'Legacy renamed pallet');
+});
+
+test('Last added includes imported, manual and duplicated items in permanent creation order',async()=>{
+  const {endpoint,detail}=await editFixture('Last added');
+  await request(`${endpoint}/items`,'POST',{source:'import',rows:[{name:'Imported'}]});
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Manual'}]});
+  let data=await detail();const manual=data.items.find(i=>i.name==='Manual');
+  const copy=(await request(`/items/${manual.id}/duplicate`,'POST',{revision:manual.revision})).data;
+  data=await detail();assert.deepEqual(data.lastAdded.map(i=>i.displayName),['Manual (copy)','Manual','Imported']);assert.deepEqual(data.lastImported.map(i=>i.displayName),['Imported']);
+  await request(`/items/${manual.id}`,'DELETE',{revision:manual.revision});
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Newest'}]});
+  const deleted=(await detail()).deletedItems;await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries(deleted)});
+  data=await detail();assert.deepEqual(data.lastAdded.map(i=>i.displayName),['Newest','Manual (copy)','Manual','Imported']);assert.equal(data.items.find(i=>i.id===manual.id).createdOrder,manual.createdOrder);
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Batch',quantity:205}]});data=await detail();assert.equal(data.lastAdded.length,200);assert.equal(data.lastAdded[0].displayName,'Batch 205');assert.equal(data.lastAdded.at(-1).displayName,'Batch 6');
+});
+test('Full visible names can remove generated numbers and uniqueness is enforced across units and case variants',async()=>{
+  const {endpoint,pallets,detail}=await editFixture('Unique editable names');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Lamp',quantity:2,palletId:pallets[0].id},{name:'Existing',palletId:pallets[1].id}]});
+  let data=await detail();const [first,second]=data.items;
+  const renamed=await request(`/items/${first.id}`,'PATCH',{displayName:'Lamp',revision:first.revision});assert.equal(renamed.status,200);assert.equal(renamed.data.displayName,'Lamp');assert.equal(renamed.data.autoNumbered,0);
+  const duplicate=await request(`/items/${second.id}`,'PATCH',{displayName:'  LAMP  ',note:'Must not save',revision:second.revision});assert.equal(duplicate.status,400);assert.match(duplicate.data.error,/already exists/);assert.equal((await detail()).items[1].note,'');
+  assert.equal((await request(`/items/${second.id}`,'PATCH',{displayName:'Existing',revision:second.revision})).status,400);
+  assert.equal((await request(`${endpoint}/items`,'POST',{rows:[{name:'lamp'}]})).status,400);
+  const copies=[];for(let i=0;i<2;i++)copies.push((await request(`/items/${first.id}/duplicate`,'POST',{revision:renamed.data.revision})).data.displayName);
+  assert.deepEqual(copies,['Lamp (copy)','Lamp (copy 2)']);
+  const values=await Promise.all([first,second].map((item)=>request(`/items/${item.id}`,'PATCH',{displayName:'Concurrent name'})));assert.deepEqual(values.map(r=>r.status).sort(),[200,400]);
+  data=await detail();assert.equal(new Set(data.items.map(i=>i.nameKey)).size,data.items.length);
+  const other=(await request('/shipments','POST',{name:'Independent names'})).data;assert.equal((await request(`/shipments/${other.id}/items`,'POST',{rows:[{name:'Concurrent name'}]})).status,201);
+});
+test('Generated names skip occupied names, and conflicting batches, restores and undo stay atomic',async()=>{
+  const {endpoint,detail}=await editFixture('Unique recovery');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Fixture 1'}]});
+  assert.equal((await request(`${endpoint}/items`,'POST',{rows:[{name:'Fixture',quantity:2}]})).status,201);
+  assert.deepEqual((await detail()).items.map(i=>i.displayName),['Fixture 1','Fixture 2','Fixture 3']);
+  assert.equal((await request(`${endpoint}/items`,'POST',{rows:[{name:'New'},{name:'NEW'}]})).status,400);assert.equal((await detail()).items.length,3);
+  const original=(await detail()).items[0];await request(`/items/${original.id}`,'DELETE',{revision:original.revision});
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Fixture 1'}]});
+  const trashed=(await detail()).deletedItems;
+  const failed=await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries(trashed)});assert.equal(failed.status,409);assert.match(failed.data.error,/already exists/);assert.equal((await detail()).items.length,3);assert.equal((await detail()).deletedItems.length,1);
+  assert.equal((await historyAction(endpoint)).status,200); // undo the replacement's creation
+  assert.equal((await historyAction(endpoint)).status,200); // undo the original's deletion
+  assert.ok((await detail()).items.some(i=>i.id===original.id));
+});
+test('Older duplicate names receive safe suffixes without losing identities, metadata or tracking',async()=>{
+  const {endpoint,detail}=await editFixture('Legacy duplicate names');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Desk',note:'Keep this'},{name:'Desk (2)'}]});
+  const original=(await detail()).items[0];await request(`/items/${original.id}`,'PATCH',{status:'inLocation',checked:true});
+  const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  const row=connection.prepare('SELECT * FROM items WHERE id=?').get(original.id);
+  const ids=[];for(let i=0;i<2;i++){const copy={...row,id:`old-duplicate-${randomBytes(8).toString('hex')}`,createdOrder:0,nameKey:''};ids.push(copy.id);const columns=Object.keys(copy);connection.prepare(`INSERT INTO items(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...Object.values(copy));}connection.close();
+  await stop();await start();const data=await detail();assert.deepEqual(data.items.map(i=>i.displayName),['Desk','Desk (2)','Desk (3)','Desk (4)']);
+  for(const id of ids){const item=data.items.find(i=>i.id===id);assert.equal(item.note,'Keep this');assert.deepEqual(item.statuses,JSON.parse(row.statuses));}
+  await stop();await start();assert.deepEqual((await detail()).items.map(i=>i.displayName),data.items.map(i=>i.displayName));
+});
+
+test('Item undo records predating canonical name keys still restore generated names and metadata',async()=>{
+  const {endpoint,detail}=await editFixture('Legacy item name history');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Named item',quantity:2,note:'Keep metadata'}]});
+  const item=(await detail()).items[0];await request(`/items/${item.id}`,'PATCH',{displayName:'Hand named',revision:item.revision});
+  const connection=new DatabaseSync(path.join(dir,'shipments.sqlite'));
+  const history=connection.prepare('SELECT id,changes FROM edit_history WHERE shipmentId=? ORDER BY sequence DESC LIMIT 1').get(item.shipmentId);
+  const changes=JSON.parse(history.changes);for(const change of changes)if(change.table==='items')for(const side of ['before','after'])if(change[side])delete change[side].nameKey;
+  connection.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),history.id);connection.close();await stop();await start();
+  assert.equal((await historyAction(endpoint)).status,200);assert.equal((await detail()).items[0].displayName,'Named item 1');assert.equal((await detail()).items[0].note,'Keep metadata');
+  assert.equal((await historyAction(endpoint,'redo')).status,200);assert.equal((await detail()).items[0].displayName,'Hand named');
 });

@@ -1,3 +1,4 @@
+import { LoadingScreen } from './loading-screen.jsx';
 import React, { useEffect, useState } from 'react';
 import { api } from './api.js';
 
@@ -12,6 +13,7 @@ export function AuthGate({ children }) {
     window.addEventListener('session-expired', expired);
     return () => window.removeEventListener('session-expired', expired);
   }, []);
+  if (loading) return <LoadingScreen/>;
   if (session?.user) return children({ user: session.user, refresh, logout: async () => { await api('/api/auth/logout', { method: 'POST' }); setSession({ user: null, setupRequired: false }); } });
   const setup = session?.setupRequired;
   return <div className="auth-page"><section className="auth-card"><a href="/" className="auth-brand">Palletshipper<span>.</span></a><p className="eyebrow">{setup ? 'FIRST-TIME SETUP' : 'YOUR WORKSPACE'}</p><h1>{loading ? 'Loading…' : setup ? 'Create your administrator account.' : 'Welcome back.'}</h1><p className="auth-intro">{setup ? 'Use this account to manage users and shipment access.' : 'Log in to manage your shipments and equipment.'}</p>{!loading && <form onSubmit={async e => { e.preventDefault(); const body = Object.fromEntries(new FormData(e.currentTarget)); setBusy(true); setError(''); try { setSession(await api(setup ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', body })); } catch (e) { setError(e.message); } finally { setBusy(false); } }}>

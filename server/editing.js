@@ -1,3 +1,4 @@
+import { itemDisplayName, itemNameKey } from '../shared/item-names.js';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
 import path from 'node:path';
@@ -13,7 +14,7 @@ export function extraFields(value) {
   });
 }
 export function installEditing(app, db, auth, dataDir, palletView, itemView) {
-  for (const [field, type] of [['autoNumbered','INTEGER NOT NULL DEFAULT 1'],['extraFields',"TEXT NOT NULL DEFAULT '[]'"],['createdOrder','INTEGER NOT NULL DEFAULT 0'],['imported','INTEGER NOT NULL DEFAULT 0']]) {
+  for (const [field, type] of [['autoNumbered','INTEGER NOT NULL DEFAULT 1'],['extraFields',"TEXT NOT NULL DEFAULT '[]'"],['createdOrder','INTEGER NOT NULL DEFAULT 0'],['imported','INTEGER NOT NULL DEFAULT 0'],['nameKey',"TEXT NOT NULL DEFAULT ''"]]) {
     if (!db.prepare('PRAGMA table_info(items)').all().some(column => column.name === field)) db.exec(`ALTER TABLE items ADD COLUMN ${field} ${type}`);
   }
   db.exec(`CREATE TABLE IF NOT EXISTS editing_counter(id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL);
@@ -23,13 +24,35 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     CREATE INDEX IF NOT EXISTS deleted_items_shipment ON deleted_items(shipmentId);
     CREATE INDEX IF NOT EXISTS edit_history_scope ON edit_history(shipmentId,userId,sequence);`);
   for (const row of db.prepare('SELECT id FROM items WHERE createdOrder=0 ORDER BY rowid').all()) db.prepare('UPDATE items SET createdOrder=? WHERE id=?').run(stamp(),row.id);
+  // Establish unique visible names without removing items or changing their identities.
+  db.exec('SAVEPOINT item_names');
+  try {
+    const existing=db.prepare('SELECT * FROM items ORDER BY createdOrder,rowid').all();
+    const reserved=new Set(existing.map(row=>JSON.stringify([row.shipmentId,itemNameKey(row)]))),seen=new Set();
+    for(const row of existing){
+      let candidate=itemDisplayName(row),key=itemNameKey(row),scope=JSON.stringify([row.shipmentId,key]);
+      if(seen.has(scope)){
+        let suffix=2;
+        do { candidate=`${itemDisplayName(row)} (${suffix++})`;key=objectNameKey(candidate);scope=JSON.stringify([row.shipmentId,key]); }while(reserved.has(scope)||seen.has(scope));
+        db.prepare('UPDATE items SET name=?,autoNumbered=0,nameKey=? WHERE id=?').run(candidate,key,row.id);
+      }else if(row.nameKey!==key)db.prepare('UPDATE items SET nameKey=? WHERE id=?').run(key,row.id);
+      seen.add(scope);
+    }
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS unique_item_names ON items(shipmentId,nameKey) WHERE nameKey<>''");
+    db.exec('RELEASE item_names');
+  }catch(error){db.exec('ROLLBACK TO item_names; RELEASE item_names');throw error;}
+  function uniqueName(item,status=400){
+    const key=itemNameKey(item);
+    if(db.prepare('SELECT id FROM items WHERE shipmentId=? AND nameKey=? AND id<>?').get(item.shipmentId,key,item.id||''))throw fail(`An item named “${itemDisplayName(item)}” already exists in this shipment. Choose a unique name.`,status);
+    return key;
+  }
   // Older undo records predate unit types; preserve their ability to undo/redo pallets.
   for(const entry of db.prepare('SELECT id,changes FROM edit_history').all()){
     const changes=JSON.parse(entry.changes);let migrated=false;
-    for(const change of changes)if(change.table==='pallets')for(const side of ['before','after']){
+    for(const change of changes)for(const side of ['before','after']){
       const row=change[side];if(!row)continue;
-      if(row.type===undefined){row.type='pallet';migrated=true;}
-      if(row.otherType===undefined){row.otherType='';migrated=true;}
+      if(change.table==='pallets'){if(row.type===undefined){row.type='pallet';migrated=true;}if(row.otherType===undefined){row.otherType='';migrated=true;}}
+      if(change.table==='items'&&row.nameKey===undefined){row.nameKey=itemNameKey(row);migrated=true;}
     }
     if(migrated)db.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),entry.id);
   }
@@ -121,6 +144,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
         const desired=direction==='undo'?change.before:change.after;
         if(!desired)continue;
         if(table==='pallets' && db.prepare('SELECT id,name FROM pallets WHERE shipmentId=? AND id<>?').all(shipment.id,desired.id).some(p=>objectNameKey(p.name)===objectNameKey(desired.name)))throw fail('A pallet already uses this name.',409);
+        if(table==='items')desired.nameKey=uniqueName(desired,409);
         const columns=Object.keys(desired),pk=table==='pallet_checks'?['palletId','stage']:['id'];
         db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')}) ON CONFLICT(${pk.join(',')}) DO UPDATE SET ${columns.filter(c=>!pk.includes(c)).map(c=>`${c}=excluded.${c}`).join(',')}`).run(...Object.values(desired));
         if(table==='items')db.prepare('DELETE FROM deleted_items WHERE id=?').run(desired.id);
@@ -159,6 +183,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
       else {
         const item=JSON.parse(row.content);
         if(item.palletId&&!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(item.palletId,req.params.id))item.palletId=null;
+        item.nameKey=uniqueName(item,409);
         const columns=Object.keys(item);db.prepare(`INSERT INTO items(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...Object.values(item));
         db.prepare('DELETE FROM deleted_items WHERE id=?').run(row.id);
       }
@@ -185,7 +210,9 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     const item=db.prepare('SELECT * FROM items WHERE id=?').get(req.params.id);
     if(!item)throw fail('Item not found.',404);
     auth.requireShipment(req.user,item.shipmentId);checkRevision(req.body,itemView(item).revision);
-    const copy={...item,id:randomUUID(),statuses:'{}',autoNumbered:0,createdOrder:stamp(),imported:0};
+    const copy={...item,id:randomUUID(),name:`${itemDisplayName(item)} (copy)`,statuses:'{}',autoNumbered:0,createdOrder:stamp(),imported:0};
+    let suffix=2;while(db.prepare('SELECT id FROM items WHERE shipmentId=? AND nameKey=?').get(item.shipmentId,itemNameKey(copy)))copy.name=`${itemDisplayName(item)} (copy ${suffix++})`;
+    copy.nameKey=uniqueName(copy);
     const last=db.prepare('SELECT lastNumber FROM item_sequences WHERE shipmentId=? AND nameKey=?').get(item.shipmentId,objectNameKey(item.name))?.lastNumber||0;
     copy.instanceNumber=last+1;
     db.prepare('INSERT INTO item_sequences VALUES(?,?,?) ON CONFLICT(shipmentId,nameKey) DO UPDATE SET lastNumber=excluded.lastNumber').run(item.shipmentId,objectNameKey(item.name),copy.instanceNumber);
@@ -193,5 +220,5 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     req.editLabel=`Duplicate ${itemView(item).displayName}`;
     res.status(201).json(itemView(copy));
   });
-  return {trash,purge,stamp,deleted:id=>db.prepare('SELECT * FROM deleted_items WHERE shipmentId=? ORDER BY rowid DESC LIMIT 200').all(id).map(row=>({...itemView(JSON.parse(row.content)),deletedAt:row.deletedAt,revision:revision(row)})),recent:id=>db.prepare('SELECT * FROM items WHERE shipmentId=? AND imported=1 ORDER BY createdOrder DESC LIMIT 200').all(id).map(itemView)};
+  return {trash,purge,stamp,uniqueName,deleted:id=>db.prepare('SELECT * FROM deleted_items WHERE shipmentId=? ORDER BY rowid DESC LIMIT 200').all(id).map(row=>({...itemView(JSON.parse(row.content)),deletedAt:row.deletedAt,revision:revision(row)})),recent:(id,importedOnly=false)=>db.prepare(`SELECT * FROM items WHERE shipmentId=? ${importedOnly?'AND imported=1':''} ORDER BY createdOrder DESC LIMIT 200`).all(id).map(itemView)};
 }

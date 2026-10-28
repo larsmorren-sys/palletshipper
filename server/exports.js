@@ -1,3 +1,4 @@
+import { itemDisplayName } from '../shared/item-names.js';
 import { unitTypeLabel } from '../shared/transport-units.js';
 import QRCode from 'qrcode';
 import { createHash, randomUUID } from 'node:crypto';
@@ -74,7 +75,7 @@ export function installExports(app, db, auth) {
     const shipment = auth.requireShipment(req.user, bulk ? req.params.id : pallet.shipmentId);
     const pallets = bulk ? db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(shipment.id) : [pallet];
     const source = bulk ? db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY rowid').all(shipment.id) : db.prepare('SELECT * FROM items WHERE palletId=? ORDER BY rowid').all(pallet.id);
-    const items = source.map(item => ({ ...item, displayName: item.autoNumbered === 0 ? item.name : `${item.name} ${item.instanceNumber}`, extraFields: JSON.parse(item.extraFields || '[]'), statuses: JSON.parse(item.statuses) })).sort((a,b) => collator.compare(a.displayName,b.displayName));
+    const items = source.map(item => ({ ...item, displayName: itemDisplayName(item), extraFields: JSON.parse(item.extraFields || '[]'), statuses: JSON.parse(item.statuses) })).sort((a,b) => collator.compare(a.displayName,b.displayName));
     const groups = pallets.map(pallet => ({ ...pallet, items: items.filter(item => item.palletId === pallet.id) }));
     const unassigned = items.filter(item => !item.palletId);
     if (bulk && unassigned.length) groups.push({ id: null, name: 'Unassigned', items: unassigned });
