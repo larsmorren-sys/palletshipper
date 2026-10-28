@@ -121,6 +121,8 @@ You can edit or delete items, assign them to units, search by name, number, code
 
 Use **Transport overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires, the owning user account is deleted, or the shipment is archived/deleted.
 
+Manual items support up to 12 extra columns through **Add item → Add column**. Enter a column name and value; these appear below the item alongside its code. The item edit dialog also lets you add, change or remove extra columns.
+
 ## Edit mode, recent items and undo
 
 Use **Edit mode** in either Items or Transport overview. Edit item names, codes, notes and extra field values directly in the existing rows; unit names and types are editable in Transport overview. Changes save automatically when leaving an edited field; typing does not trigger requests. Only failed saves show a status below the row. Invalid or duplicate names are not saved. Failed saves retain the draft and offer **Retry**. Wait for saving to finish before leaving the view or starting another operation. Selection checkboxes and **Select all visible** apply to the current search/filter, not hidden rows.
