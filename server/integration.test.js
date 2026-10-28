@@ -1245,3 +1245,43 @@ test('Administrators can delete accounts without deleting shipments, tracking, a
   const board=(await request('/challenges','GET',undefined,remaining.session)).data;assert.equal(board.rows.some(r=>r.id===departing.user.id),false);assert.equal(board.rows.find(r=>r.id===remaining.user.id).palletKm,200);
   await stop();await start();assert.equal((await request(endpoint)).data.pallets.length,2);assert.equal((await request(`/users/${departing.user.id}`,'DELETE',{confirmEmail:departing.user.email})).status,404);
 });
+
+test('Extra columns are shared within a shipment across manual additions, imports, edits and undo',async()=>{
+  const {endpoint,detail}=await editFixture('Shared columns');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Existing'}]});
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Manual',extraFields:[{label:'Colour',value:'Blue'}]}]});
+  let data=await detail();
+  assert.deepEqual(data.extraColumns,['Colour']);
+  assert.deepEqual(data.items.find(i=>i.displayName==='Existing').extraFields,[{label:'Colour',value:''}]);
+  await request(`${endpoint}/items`,'POST',{source:'import',rows:[{name:'Imported',extraFields:[{label:'Weight',value:'10 kg'},{label:'colour',value:'Red'}]}]});
+  data=await detail();assert.deepEqual(data.extraColumns,['Colour','Weight']);
+  assert.deepEqual(data.items.find(i=>i.displayName==='Imported').extraFields,[{label:'Colour',value:'Red'},{label:'Weight',value:'10 kg'}]);
+  assert.deepEqual(data.items.find(i=>i.displayName==='Manual').extraFields,[{label:'Colour',value:'Blue'},{label:'Weight',value:''}]);
+  const other=await editFixture('Separate columns');assert.deepEqual((await other.detail()).extraColumns,[]);
+  assert.equal((await historyAction(endpoint)).status,200);data=await detail();assert.deepEqual(data.extraColumns,['Colour']);
+  assert.equal((await historyAction(endpoint,'redo')).status,200);data=await detail();assert.deepEqual(data.extraColumns,['Colour','Weight']);
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Later'}]});data=await detail();const later=data.items.find(i=>i.displayName==='Later');
+  assert.deepEqual(later.extraFields,[{label:'Colour',value:''},{label:'Weight',value:''}]);
+  const edited=await request(`/items/${later.id}`,'PATCH',{revision:later.revision,extraFields:[{label:'Size',value:'Large'}]});assert.equal(edited.status,200);
+  data=await detail();assert.ok(data.items.every(i=>i.extraFields.some(f=>f.label==='Size')));
+  const before=JSON.stringify(data.extraColumns);
+  const failed=await request(`${endpoint}/items`,'POST',{rows:[{name:'Later',extraFields:[{label:'Failed column',value:'No'}]}]});assert.equal(failed.status,400);assert.equal(JSON.stringify((await detail()).extraColumns),before);
+});
+
+test('Shared columns survive empty shipments and undo cannot hide another user’s entered values',async()=>{
+  const member=await createMember('shared-column-user@example.test');
+  const {endpoint,detail}=await editFixture('Shared column safety');
+  await request(`${endpoint}/access`,'PUT',{userIds:[member.user.id]});
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'First',extraFields:[{label:'Department',value:'Lighting'}]}]});
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Second'}]},member.session);
+  let data=await detail(),second=data.items.find(i=>i.displayName==='Second');
+  assert.equal((await request(`/items/${second.id}`,'PATCH',{revision:second.revision,extraFields:[{label:'Department',value:'Audio'}]},member.session)).status,200);
+  assert.equal((await historyAction(endpoint)).status,409);
+  data=await detail();assert.deepEqual(data.extraColumns,['Department']);assert.equal(data.items.find(i=>i.id===second.id).extraFields[0].value,'Audio');
+  assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'delete',entries:entries(data.items)})).status,200);
+  data=await detail();assert.equal(data.items.length,0);assert.deepEqual(data.extraColumns,['Department']);
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Fresh'}]});assert.deepEqual((await detail()).items[0].extraFields,[{label:'Department',value:''}]);
+  const fields=Array.from({length:12},(_,i)=>({label:`Limit ${i}`,value:''}));
+  assert.equal((await request(`${endpoint}/items`,'POST',{rows:[{name:'Too many',extraFields:fields}]})).status,400);
+  assert.deepEqual((await detail()).extraColumns,['Department']);
+});

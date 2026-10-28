@@ -1,3 +1,4 @@
+import { sharedItemFields } from './item-columns.js';
 import { itemDisplayName } from '../shared/item-names.js';
 import { unitTypeLabel } from '../shared/transport-units.js';
 import QRCode from 'qrcode';
@@ -75,7 +76,7 @@ export function installExports(app, db, auth) {
     const shipment = auth.requireShipment(req.user, bulk ? req.params.id : pallet.shipmentId);
     const pallets = bulk ? db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(shipment.id) : [pallet];
     const source = bulk ? db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY rowid').all(shipment.id) : db.prepare('SELECT * FROM items WHERE palletId=? ORDER BY rowid').all(pallet.id);
-    const items = source.map(item => ({ ...item, displayName: itemDisplayName(item), extraFields: JSON.parse(item.extraFields || '[]'), statuses: JSON.parse(item.statuses) })).sort((a,b) => collator.compare(a.displayName,b.displayName));
+    const items = source.map(item => ({ ...item, displayName: itemDisplayName(item), extraFields: sharedItemFields(db,item), statuses: JSON.parse(item.statuses) })).sort((a,b) => collator.compare(a.displayName,b.displayName));
     const groups = pallets.map(pallet => ({ ...pallet, items: items.filter(item => item.palletId === pallet.id) }));
     const unassigned = items.filter(item => !item.palletId);
     if (bulk && unassigned.length) groups.push({ id: null, name: 'Unassigned', items: unassigned });
@@ -98,7 +99,7 @@ export function installExports(app, db, auth) {
     }
     const columns = auth.getColumns(req.user.id, shipment.id);
     const tracking = stages.filter(([key]) => columns[key]);
-    const extraLabels = [...new Set(items.flatMap(item=>item.extraFields.map(field=>field.label)))];
+    const extraLabels = db.prepare('SELECT label FROM item_columns WHERE shipmentId=? ORDER BY rowid').all(shipment.id).map(row=>row.label);
     const headers = ['Shipment', 'Pallet / transport unit', 'Item', 'Item code', 'Quantity', 'Note', 'Unit type', ...extraLabels, ...tracking.map(([,label]) => label)];
     const groupRows = group => group.items.map(item => [shipment.name, group.name, item.displayName, item.code, 1, item.note, group.id ? unitTypeLabel(group) : '', ...extraLabels.map(label=>item.extraFields.find(field=>field.label===label)?.value || ''), ...tracking.map(([key]) => formatDate(item.statuses[key]))]);
     const rows = groups.flatMap(groupRows);

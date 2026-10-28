@@ -6,9 +6,9 @@ export function ItemExtraFields({ initialFields = [], disabled }) {
   return <section className="manual-extra-fields" aria-label="Extra columns">
     <input type="hidden" name="extraFields" value={JSON.stringify(fields)}/>
     {fields.map((field,index)=><div className="manual-extra-row" key={index}>
-      <label>Column name<input aria-label={`Extra column ${index+1} name`} required pattern={'.*\\S.*'} maxLength={80} value={field.label} disabled={disabled} onChange={e=>change(index,'label',e.target.value)}/></label>
+      <label>Column name<input aria-label={`Extra column ${index+1} name`} required pattern={'.*\\S.*'} maxLength={80} value={field.label} readOnly={index<initialFields.length} disabled={disabled} onChange={e=>change(index,'label',e.target.value)}/></label>
       <label>Value<input aria-label={`Extra column ${index+1} value`} maxLength={1000} value={field.value} disabled={disabled} onChange={e=>change(index,'value',e.target.value)}/></label>
-      <button type="button" className="delete-button" aria-label={`Remove extra column ${index+1}`} disabled={disabled} onClick={()=>setFields(current=>current.filter((_,i)=>i!==index))}>Remove</button>
+      <button type="button" className="delete-button" aria-label={`Remove extra column ${index+1}`} disabled={disabled} onClick={()=>index<initialFields.length?change(index,'value',''):setFields(current=>current.filter((_,i)=>i!==index))}>{index<initialFields.length?'Clear value':'Remove'}</button>
     </div>)}
     <button type="button" className="secondary" disabled={disabled||fields.length>=12} onClick={()=>setFields(current=>[...current,{label:'',value:''}])}>Add column</button>
   </section>;

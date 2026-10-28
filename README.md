@@ -121,7 +121,7 @@ You can edit or delete items, assign them to units, search by name, number, code
 
 Use **Transport overview** to rename or delete pallets. Deleting a pallet requires confirmation. Its items move to **Unassigned** with their tracking preserved. On active shipments, undo can restore the deleted pallet, its photos and pallet checks. Photo files retained solely for undo are removed when their last history reference expires, the owning user account is deleted, or the shipment is archived/deleted.
 
-Manual items support up to 12 extra columns through **Add item → Add column**. Enter a column name and value; these appear below the item alongside its code. The item edit dialog also lets you add, change or remove extra columns.
+Each shipment shares up to 12 extra columns. Adding a column through **Add item → Add column**, the item edit dialog or import makes it available on every item in that shipment, including future items. Values stay individual; missing values appear as —. Existing columns are prefilled in manual forms and imports. Clear an item’s value without removing the column from other items. Existing per-item columns migrate automatically, preserving values. Column additions participate in undo/redo; undo is blocked if another action has since filled that column.
 
 ## Edit mode, recent items and undo
 

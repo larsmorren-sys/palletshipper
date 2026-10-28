@@ -57,9 +57,9 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     }
     if(migrated)db.prepare('UPDATE edit_history SET changes=? WHERE id=?').run(JSON.stringify(changes),entry.id);
   }
-  const tables = ['items','pallets','pallet_checks','pallet_photos'];
+  const tables = ['items','pallets','pallet_checks','pallet_photos','item_columns'];
   const key = (table,row) => table === 'pallet_checks' ? `${row.palletId}:${row.stage}` : row.id;
-  const rows = (table,id) => table === 'items' || table === 'pallets' ? db.prepare(`SELECT * FROM ${table} WHERE shipmentId=?`).all(id) : db.prepare(`SELECT t.* FROM ${table} t JOIN pallets p ON p.id=t.palletId WHERE p.shipmentId=?`).all(id);
+  const rows = (table,id) => table === 'items' || table === 'pallets' || table === 'item_columns' ? db.prepare(`SELECT * FROM ${table} WHERE shipmentId=?`).all(id) : db.prepare(`SELECT t.* FROM ${table} t JOIN pallets p ON p.id=t.palletId WHERE p.shipmentId=?`).all(id);
   const snapshot = id => Object.fromEntries(tables.map(table=>[table,rows(table,id)]));
   function diff(before,after) {
     return tables.flatMap(table => {
@@ -141,7 +141,7 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
     db.exec('SAVEPOINT history_apply');
     try{
       // Create parents, reconcile children, then remove parents. Unrecorded dependencies block deletion.
-      for(const table of ['pallets','items','pallet_photos','pallet_checks'])for(const change of changes.filter(c=>c.table===table)){
+      for(const table of ['item_columns','pallets','items','pallet_photos','pallet_checks'])for(const change of changes.filter(c=>c.table===table)){
         const desired=direction==='undo'?change.before:change.after;
         if(!desired)continue;
         if(table==='pallets' && db.prepare('SELECT id,name FROM pallets WHERE shipmentId=? AND id<>?').all(shipment.id,desired.id).some(p=>objectNameKey(p.name)===objectNameKey(desired.name)))throw fail('A pallet already uses this name.',409);
@@ -150,9 +150,9 @@ export function installEditing(app, db, auth, dataDir, palletView, itemView) {
         db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')}) ON CONFLICT(${pk.join(',')}) DO UPDATE SET ${columns.filter(c=>!pk.includes(c)).map(c=>`${c}=excluded.${c}`).join(',')}`).run(...Object.values(desired));
         if(table==='items')db.prepare('DELETE FROM deleted_items WHERE id=?').run(desired.id);
       }
-      for(const table of ['pallet_checks','pallet_photos','items','pallets'])for(const change of changes.filter(c=>c.table===table)){
+      for(const table of ['pallet_checks','pallet_photos','items','pallets','item_columns'])for(const change of changes.filter(c=>c.table===table)){
         const desired=direction==='undo'?change.before:change.after;
-        if(!desired){const row=change.before||change.after;if(table==='items')trash(row,req.user.id);if(table==='pallet_checks')db.prepare('DELETE FROM pallet_checks WHERE palletId=? AND stage=?').run(row.palletId,row.stage);else db.prepare(`DELETE FROM ${table} WHERE id=?`).run(row.id);}
+        if(!desired){const row=change.before||change.after;if(table==='item_columns'&&db.prepare('SELECT extraFields FROM items WHERE shipmentId=?').all(shipment.id).some(item=>JSON.parse(item.extraFields||'[]').some(field=>objectNameKey(field.label)===row.nameKey&&field.value)))throw fail('This column contains values added by another action.',409);if(table==='items')trash(row,req.user.id);if(table==='pallet_checks')db.prepare('DELETE FROM pallet_checks WHERE palletId=? AND stage=?').run(row.palletId,row.stage);else db.prepare(`DELETE FROM ${table} WHERE id=?`).run(row.id);}
       }
       db.prepare('UPDATE edit_history SET undone=? WHERE id=?').run(direction==='undo'?1:0,entry.id);prune(shipment.id);
       db.exec('RELEASE history_apply');

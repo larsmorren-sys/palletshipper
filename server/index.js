@@ -1,3 +1,4 @@
+import { installItemColumns, sharedItemFields } from './item-columns.js';
 import { assignmentStatuses } from './assignment-tracking.js';
 import { installUserDeletion } from './user-deletion.js';
 import { itemDisplayName, itemNameKey } from '../shared/item-names.js';
@@ -88,12 +89,13 @@ const challenges = installChallenges(app, db, auth);
 installExports(app, db, auth);
 const requireShipment = auth.requireShipment;
 const requirePallet = (id, shipmentId) => { if (!db.prepare('SELECT id FROM pallets WHERE id=? AND shipmentId=?').get(id, shipmentId)) throw fail('This pallet does not belong to this shipment.'); };
-const itemView = row => ({ ...row, revision: revision(row), displayName: itemDisplayName(row), extraFields: JSON.parse(row.extraFields || '[]'), statuses: JSON.parse(row.statuses) });
+const itemView = row => ({ ...row, revision: revision(row), displayName: itemDisplayName(row), extraFields: sharedItemFields(db,row), statuses: JSON.parse(row.statuses) });
 // Keep a high-water mark so removing an object never reuses its number.
 db.exec('CREATE TABLE IF NOT EXISTS item_sequences (shipmentId TEXT NOT NULL REFERENCES shipments(id), nameKey TEXT NOT NULL, lastNumber INTEGER NOT NULL, PRIMARY KEY(shipmentId, nameKey))');
 const reserveNumber = db.prepare('INSERT INTO item_sequences VALUES (?, ?, ?) ON CONFLICT(shipmentId,nameKey) DO UPDATE SET lastNumber=MAX(lastNumber,excluded.lastNumber)');
 for (const item of db.prepare('SELECT shipmentId, name, instanceNumber FROM items').all()) reserveNumber.run(item.shipmentId, objectNameKey(item.name), item.instanceNumber);
 const editor = installEditing(app, db, auth, dataDir, palletView, itemView);
+const itemColumns = installItemColumns(db);
 installUserDeletion(app, db, editor);
 app.get('/api/health', (_, res) => res.json({ ok: true }));
 app.get('/api/shipments', (req, res) => {
@@ -168,7 +170,7 @@ app.delete('/api/shipments/:id', (req, res) => {
 });
 app.get('/api/shipments/:id', (req, res) => {
   requireShipment(req.user, req.params.id);
-  res.json({ hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY createdOrder').all(req.params.id).map(itemView), lastAdded: editor.recent(req.params.id), lastImported: editor.recent(req.params.id,true), deletedItems: editor.deleted(req.params.id) });
+  res.json({ extraColumns:itemColumns.columns(req.params.id), hasLogo: !!db.prepare('SELECT 1 FROM shipment_logos WHERE shipmentId=?').get(req.params.id), columns: auth.getColumns(req.user.id, req.params.id), palletColumns: auth.getColumns(req.user.id, req.params.id, 'pallets'), pallets: db.prepare('SELECT * FROM pallets WHERE shipmentId=? ORDER BY rowid').all(req.params.id).map(palletView), items: db.prepare('SELECT * FROM items WHERE shipmentId=? ORDER BY createdOrder').all(req.params.id).map(itemView), lastAdded: editor.recent(req.params.id), lastImported: editor.recent(req.params.id,true), deletedItems: editor.deleted(req.params.id) });
 });
 function unitFields(body, current={type:'pallet',otherType:''}) {
   const type=body.type===undefined?current.type:body.type;
@@ -261,6 +263,7 @@ app.post('/api/shipments/:id/items', (req, res) => {
   if (total > 2000) throw fail('Add no more than 2000 items at a time.');
   db.exec('SAVEPOINT mutation');
   try {
+    itemColumns.add(req.params.id,prepared.flatMap(row=>row.extraFields));
     const numbers = new Map();
     for (const row of db.prepare('SELECT nameKey, lastNumber FROM item_sequences WHERE shipmentId=?').all(req.params.id)) numbers.set(row.nameKey, row.lastNumber);
     const insert = db.prepare('INSERT INTO items (id, shipmentId, palletId, name, code, note, statuses, instanceNumber, autoNumbered, extraFields, createdOrder, imported, nameKey) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -315,6 +318,7 @@ app.patch('/api/items/:id', (req, res) => {
   updated.nameKey=editor.uniqueName(updated);
   db.exec('SAVEPOINT mutation');
   try {
+    if('extraFields' in req.body)itemColumns.add(item.shipmentId,JSON.parse(updated.extraFields));
     reserveNumber.run(item.shipmentId, objectNameKey(updated.name), updated.instanceNumber);
     db.prepare('UPDATE items SET name=?, code=?, note=?, palletId=?, statuses=?, instanceNumber=?, extraFields=?, autoNumbered=?, nameKey=? WHERE id=?').run(updated.name, updated.code, updated.note, updated.palletId, updated.statuses, updated.instanceNumber, updated.extraFields, updated.autoNumbered, updated.nameKey, item.id);
     db.exec('RELEASE mutation');
