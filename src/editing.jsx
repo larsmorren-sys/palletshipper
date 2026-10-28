@@ -10,7 +10,7 @@ export function HistoryControls({ shipmentId, disabled, onApply }) {
   useEffect(()=>{
     let active=true;
     const load=()=>api(`/api/shipments/${shipmentId}/history`).then(value=>{if(active)setHistory(value);}).catch(()=>{});
-    const changed=event=>{load();if(event.detail?.label)setMessage(`Saved: ${event.detail.label}`);};
+    const changed=()=>{load();setMessage('');};
     setHistory({});setMessage('');load();
     window.addEventListener('shipment-data-changed',changed);const timer=setInterval(load,5000);
     return()=>{active=false;clearInterval(timer);window.removeEventListener('shipment-data-changed',changed);};
