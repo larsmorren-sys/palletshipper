@@ -69,3 +69,5 @@
 .extra-column-manager .extra-column-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0}.extra-column-entry>span{overflow-wrap:anywhere;min-width:0}.extra-column-entry>button{min-height:36px;flex-shrink:0}
 
 .column-picker.extra-column-manager>div{width:340px;max-width:calc(100vw - 40px);max-height:360px;overflow:auto}.extra-column-manager .extra-column-entry>span{flex:1}.extra-column-manager .extra-column-entry .secondary{padding:7px 10px;min-height:36px}
+
+.item-selection-zone{cursor:pointer}.item-drag-zone{cursor:grab;user-select:none}.item-drag-zone:active{cursor:grabbing}.item-selection-zone input,.item-selection-zone textarea{cursor:text;user-select:text}.item-selection-zone input[type=checkbox]{cursor:pointer}.item-selection-zone select,.item-selection-zone button{cursor:pointer}

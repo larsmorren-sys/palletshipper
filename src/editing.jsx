@@ -76,7 +76,7 @@ function InlineItemFields({ item, allItems, onSave, disabled, onDirty }) {
 
 export function ItemTable({ items,allItems,pallets,visibleStages,editMode,dragMode,deleted,busy,onSave,onPatch,onDelete,onEdit,onDuplicate,onBulk,onDirty,selectionKey,dirtyRows=[],archived }) {
   const [selected,setSelected]=useState([]),[drag,setDrag]=useState(null);
-  const dragRef=useRef(null),latest=useRef(null);
+  const dragRef=useRef(null),latest=useRef(null),gestureCleanup=useRef(null),suppressClick=useRef(false);
   latest.current={items,selected,onBulk,busy};
   useEffect(()=>{setSelected([]);},[selectionKey]);
   useEffect(()=>{if(!editMode&&!dragMode){setSelected([]);}if(!dragMode){dragRef.current=null;setDrag(null);}},[editMode,dragMode]);
@@ -109,12 +109,34 @@ export function ItemTable({ items,allItems,pallets,visibleStages,editMode,dragMo
     document.addEventListener('pointermove',move,{passive:false});document.addEventListener('pointerup',end);document.addEventListener('pointercancel',end);document.addEventListener('keydown',cancel);
     return()=>{clearInterval(autoScroll);hovered?.classList.remove('is-drop-target');document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',end);document.removeEventListener('pointercancel',end);document.removeEventListener('keydown',cancel);};
   },[!!drag]);
-  function startDrag(event,item){if(!dragMode||editMode||deleted||locked||event.pointerType!=='mouse'||event.button!==0)return;event.preventDefault();const ids=available.includes(item.id)?available:[item.id];setSelected(ids);const value={ids,x:event.clientX,y:event.clientY};dragRef.current=value;setDrag(value);}
+  useEffect(()=>()=>gestureCleanup.current?.(),[editMode,dragMode,selectionKey]);
+  const isControl=target=>!!target.closest('input,textarea,select,button,a,label,[contenteditable="true"]');
+  function zoneEvents(item){
+    return {
+      className:selecting&&!locked?`item-selection-zone ${dragMode&&!deleted?'item-drag-zone':''}`:undefined,
+      onClick:event=>{if(!selecting||locked||isControl(event.target)||suppressClick.current)return;setSelected(ids=>ids.includes(item.id)?ids.filter(id=>id!==item.id):[...ids,item.id]);},
+      onPointerDown:event=>{
+        suppressClick.current=false;
+        if(!dragMode||editMode||deleted||locked||event.pointerType!=='mouse'||event.button!==0||isControl(event.target))return;
+        event.preventDefault();gestureCleanup.current?.();
+        const x=event.clientX,y=event.clientY,ids=available.includes(item.id)?available:[item.id];
+        const cleanup=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',cleanup);document.removeEventListener('pointercancel',cleanup);document.removeEventListener('keydown',cancel);gestureCleanup.current=null;};
+        const cancel=e=>{if(e.key==='Escape')cleanup();};
+        const move=e=>{
+          if(Math.hypot(e.clientX-x,e.clientY-y)<6)return;
+          cleanup();suppressClick.current=true;setSelected(ids);
+          const value={ids,x:e.clientX,y:e.clientY};dragRef.current=value;setDrag(value);
+        };
+        gestureCleanup.current=cleanup;
+        document.addEventListener('pointermove',move);document.addEventListener('pointerup',cleanup);document.addEventListener('pointercancel',cleanup);document.addEventListener('keydown',cancel);
+      }
+    };
+  }
   return <>
     {selecting&&<div className="bulk-toolbar"><strong>{available.length} selected</strong><button className="secondary" disabled={locked||!items.length} onClick={()=>setSelected(all?[]:items.map(i=>i.id))}>{all?'Deselect all':'Select all visible'}</button>{deleted?<button className="primary" disabled={locked||!available.length} onClick={()=>bulk('restore')}>Restore selected</button>:<><button className="delete-button" disabled={locked||!available.length} onClick={()=>bulk('delete')}>Delete selected</button></>}<small>Selection applies to the visible rows.{!deleted&&(dragMode?' Drag selected items to a unit in the left column, or choose a unit in a selected row.':' Choose a unit in any selected row to move the selection.')}</small></div>}
     <div className="table-scroll"><table className={editMode?'editing-table':''}><thead><tr>{selecting&&<th className="selection-column"><input type="checkbox" aria-label="Select all visible items" checked={all} disabled={locked||!items.length} onChange={()=>setSelected(all?[]:items.map(i=>i.id))}/></th>}<th>Item</th><th>{deleted?'Deleted':'Transport unit'}</th>{!deleted&&visibleStages.map(([key,label])=><th className="status-column" key={key}>{label}</th>)}<th>Actions</th></tr></thead><tbody>{items.map(item=><tr key={item.id} className={available.includes(item.id)?'selected-row':''}>
-      {selecting&&<td className="selection-column"><input type="checkbox" aria-label={`Select: ${item.displayName}`} checked={available.includes(item.id)} disabled={locked} onChange={e=>setSelected(ids=>e.target.checked?[...ids,item.id]:ids.filter(id=>id!==item.id))}/></td>}
-      <td>{editMode&&!deleted?<InlineItemFields item={item} allItems={names} onSave={onSave} disabled={busy} onDirty={onDirty}/>:<><div className={`object-name ${dragMode&&!deleted&&!locked?'draggable-name':''}`} role={dragMode&&!deleted?'button':undefined} tabIndex={dragMode&&!deleted?0:undefined} aria-label={dragMode&&!deleted?`Drag: ${item.displayName}`:undefined} onPointerDown={e=>startDrag(e,item)} onKeyDown={e=>{if(dragMode&&!locked&&['Enter',' '].includes(e.key)){e.preventDefault();setSelected([item.id]);e.currentTarget.closest('tr')?.querySelector('.pallet-select')?.focus();}}}>{item.displayName}</div><div className="object-meta">{[item.code,...(item.extraFields||[]).map(f=>`${f.label}: ${f.value||'—'}`)].filter(Boolean).join(' · ')||'No item code'}</div>{item.note&&<div className="object-note">{item.note}</div>}</>}</td>
+      {selecting&&<td {...zoneEvents(item)} className={`selection-column ${selecting&&!locked?'item-selection-zone':''} ${dragMode&&!deleted&&!locked?'item-drag-zone':''}`}><input type="checkbox" aria-label={`Select: ${item.displayName}`} checked={available.includes(item.id)} disabled={locked} onChange={e=>setSelected(ids=>e.target.checked?[...ids,item.id]:ids.filter(id=>id!==item.id))}/></td>}
+      <td {...zoneEvents(item)}>{editMode&&!deleted?<InlineItemFields item={item} allItems={names} onSave={onSave} disabled={busy} onDirty={onDirty}/>:<><div className={`object-name ${dragMode&&!deleted&&!locked?'draggable-name':''}`} role={dragMode&&!deleted?'button':undefined} tabIndex={dragMode&&!deleted?0:undefined} aria-label={dragMode&&!deleted?`Drag: ${item.displayName}`:undefined} onKeyDown={e=>{if(dragMode&&!locked&&['Enter',' '].includes(e.key)){e.preventDefault();setSelected([item.id]);e.currentTarget.closest('tr')?.querySelector('.pallet-select')?.focus();}}}>{item.displayName}</div><div className="object-meta">{[item.code,...(item.extraFields||[]).map(f=>`${f.label}: ${f.value||'—'}`)].filter(Boolean).join(' · ')||'No item code'}</div>{item.note&&<div className="object-note">{item.note}</div>}</>}</td>
       <td>{deleted?<span>{formatDate(item.deletedAt)}</span>:<select className="pallet-select" value={item.palletId||''} disabled={locked} aria-label={`Unit for ${item.displayName}`} onChange={e=>selecting&&available.includes(item.id)?bulk('assign',e.target.value||null):onPatch(item.id,{palletId:e.target.value||null})}><option value="">Unassigned</option>{pallets.map(p=><option key={p.id} value={p.id}>{p.name} · {unitTypeLabel(p)}</option>)}</select>}</td>
       {!deleted&&visibleStages.map(([key,label])=><td className="status-cell" key={key}><label title={item.statuses[key]?formatDate(item.statuses[key]):label}><input type="checkbox" checked={!!item.statuses[key]} disabled={locked} aria-label={`${label}: ${item.displayName}`} onChange={e=>onPatch(item.id,{status:key,checked:e.target.checked})}/>{item.statuses[key]&&<small>{formatDate(item.statuses[key])}</small>}</label></td>)}
       <td><div className="object-actions">{deleted?<button className="secondary" disabled={locked} onClick={()=>bulk('restore',null,[item.id])}>Restore</button>:<>{!editMode&&<button className="secondary" disabled={locked} aria-label={`Edit: ${item.displayName}`} onClick={()=>onEdit(item)}>Edit</button>}<button className="secondary" disabled={locked} aria-label={`Duplicate: ${item.displayName}`} onClick={()=>onDuplicate(item)}>Duplicate</button><button className="delete-button" disabled={locked} aria-label={`Delete: ${item.displayName}`} onClick={()=>onDelete(item)}>Delete</button></>}</div></td>
