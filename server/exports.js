@@ -1,3 +1,4 @@
+import { packingColumns } from '../shared/packing-columns.js';
 import { sharedItemFields } from './item-columns.js';
 import { itemDisplayName } from '../shared/item-names.js';
 import { unitTypeLabel } from '../shared/transport-units.js';
@@ -104,7 +105,20 @@ export function installExports(app, db, auth) {
     const groupRows = group => group.items.map(item => [shipment.name, group.name, item.displayName, item.code, 1, item.note, group.id ? unitTypeLabel(group) : '', ...extraLabels.map(label=>item.extraFields.find(field=>field.label===label)?.value || ''), ...tracking.map(([key]) => formatDate(item.statuses[key]))]);
     const rows = groups.flatMap(groupRows);
     if (format === 'print') {
-      const table = group => `<table><thead><tr>${headers.slice(2).map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${groupRows(group).map(row => `<tr>${row.slice(2).map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+      const available=packingColumns(extraLabels);
+      let selection=available.filter(column=>!column.id.startsWith('tracking:')||columns[column.id.slice(9)]).map(column=>column.id);
+      if(req.query.columns!==undefined){
+        try{selection=JSON.parse(req.query.columns);}catch{throw fail('Choose valid packing-list columns.');}
+        if(!Array.isArray(selection)||!selection.length||selection.some(id=>typeof id!=='string'||!available.some(column=>column.id===id))||new Set(selection).size!==selection.length)throw fail('Select at least one valid packing-list column.');
+      }
+      const printColumns=available.filter(column=>selection.includes(column.id));
+      const cells=(item,group)=>{
+        const values={item:item.displayName,code:item.code,quantity:1,note:item.note,type:group.id?unitTypeLabel(group):''};
+        for(const field of item.extraFields)values[`extra:${field.label}`]=field.value;
+        for(const [key] of stages)values[`tracking:${key}`]=formatDate(item.statuses[key]);
+        return printColumns.map(column=>values[column.id]??'');
+      };
+      const table = group => `<table><thead><tr>${printColumns.map(column => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead><tbody>${group.items.map(item => `<tr>${cells(item,group).map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
       const css = '@page{size:A4 landscape;margin:12mm}.packing-list{background:white;margin:20px auto;max-width:1200px;padding:30px}.packing-list header{display:flex;justify-content:space-between;align-items:center;gap:25px;margin-bottom:25px}.packing-list h1{font-size:23px;overflow-wrap:anywhere}.packing-list p{margin-top:10px;font-size:12px}table{border-collapse:collapse;width:100%;font-size:11px;table-layout:fixed}th,td{border:1px solid #d5ddcf;padding:8px;text-align:left;overflow-wrap:anywhere;vertical-align:top}thead{display:table-header-group}tr{break-inside:avoid}th{background:#edf2e8}@media print{.packing-list{padding:0;margin:0;max-width:none;break-before:page}.packing-list:first-of-type{break-before:auto}}';
       const lists = groups.map(group => `<article class="packing-list"><header>${logo}<div><h1>${escapeHtml(shipment.name)} — ${escapeHtml(group.name)}</h1><p>${group.items.length} individual items${shipment.destination ? ` · ${escapeHtml(shipment.destination)}` : ''}</p></div></header>${table(group)}${!group.items.length ? '<p>This pallet has no items yet.</p>' : ''}</article>`).join('');
       res.type('html').send(documentHtml(heading, css, `<div class="print-tools"><button onclick="window.print()">Print all lists / save as PDF</button><span>A4 landscape · ${pallets.length} pallets${unassigned.length ? ' + unassigned items' : ''}</span></div>${lists || '<article class="packing-list"><p>This shipment has no pallets or items yet.</p></article>'}`));

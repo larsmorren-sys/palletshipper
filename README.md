@@ -185,7 +185,7 @@ Open **Export** to export the entire shipment at once. Searches and the selected
 - **All packing lists / PDF**: an A4 landscape section per pallet.
 - **All A6 labels / PDF**: one 105 × 148 mm label per pallet.
 
-Unassigned items are listed separately without a pallet label. Equipment lists use your visible item tracking columns. Print pages can be saved as PDF using the browser print dialog.
+Unassigned items are listed separately without a pallet label. Excel and CSV use your visible item tracking columns. Packing lists use the columns selected in the export menu. Print pages can be saved as PDF using the browser print dialog.
 
 A6 labels show the logo, shipment name, pallet name and outbound/return route details. A 20 × 20 mm QR code sits at the bottom right within a 9 mm print margin and retains its white scan border. Print at 100% scale without browser headers and footers.
 
@@ -241,3 +241,5 @@ Distance points are signed: pallets, cases and Other use a factor of **+1**; sui
 Outbound points use Out warehouse + In location checks; return points use Out location + In warehouse checks. The user with the most active checks on a leg receives its distance rewards; tied users split them equally. Only arrival checks with user attribution earn pallet kilometres. Rewards for partial arrivals are provisional and can change as further checks are recorded. The reward is complete when every pallet has an attributed arrival. Year/month filters use the Belgian calendar and original arrival date. Archiving preserves scores; deleting a pallet or shipment removes its scores. Physical pallets are not tracked across shipments.
 
 By default, leaderboards include only shipments visible to the current user. Administrators can enable a shared leaderboard of user names and totals. Shipment details always require access, including in the shared view. This switch affects all users and can be disabled at any time.
+
+Before opening **All packing lists / PDF**, choose the desired columns in **Export → Packing list / PDF columns**. Standard fields, shared extra columns and all four tracking stages can be selected separately; at least one column is required. Shipment and transport-unit names remain in page headings. This selection applies to all packing lists, including Unassigned; Excel, CSV and A6 labels keep their own existing behavior.

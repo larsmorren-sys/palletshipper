@@ -1315,3 +1315,13 @@ test('Renaming shared columns preserves values and trash, validates unique names
   assert.equal((await historyAction(endpoint,'redo')).status,200);data=await detail();assert.equal(data.items[0].extraFields[0].label,'Finish');
   const deleted=data.deletedItems[0];assert.equal((await request(`${endpoint}/items/bulk`,'POST',{operation:'restore',entries:entries([deleted])})).status,200);data=await detail();assert.equal(data.items.find(i=>i.displayName==='Trashed').extraFields[0].value,'Red');
 });
+
+test('Packing list column selection filters standard extra and tracking cells for every group',async()=>{
+  const {endpoint,pallets}=await editFixture('Selected packing columns');
+  await request(`${endpoint}/items`,'POST',{rows:[{name:'Assigned',code:'HIDDEN-CODE',note:'HIDDEN-NOTE',palletId:pallets[0].id,extraFields:[{label:'Department',value:'Lighting'}]},{name:'Unassigned gear',extraFields:[{label:'Department',value:'Audio'}]}]});
+  const get=columns=>fetch(`http://127.0.0.1:${port}/api${endpoint}/export?format=print${columns===undefined?'':'&columns='+encodeURIComponent(JSON.stringify(columns))}`,{headers:{Cookie:adminSession.cookie}});
+  let response=await get(['item','extra:Department','tracking:inWarehouse']);assert.equal(response.status,200);let html=await response.text();
+  assert.match(html,/<th>Item<\/th><th>Department<\/th><th>In warehouse<\/th>/);assert.match(html,/Lighting/);assert.match(html,/Audio/);assert.match(html,/Unassigned gear/);assert.doesNotMatch(html,/HIDDEN-CODE|HIDDEN-NOTE|<th>Quantity<\/th>|<th>Out warehouse<\/th>/);
+  assert.equal((await get([])).status,400);assert.equal((await get(['unknown'])).status,400);assert.equal((await get(['item','item'])).status,400);
+  response=await get();html=await response.text();assert.match(html,/HIDDEN-CODE/);assert.match(html,/<th>Quantity<\/th>/);
+});
